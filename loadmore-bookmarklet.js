@@ -119,13 +119,7 @@
       }
     });
 
-    if (added === 0) {
-      btn.innerHTML = '<span class="fa fa-check"></span> No more records';
-      btn.disabled = true;
-      btn.className = 'btn btn-secondary btn-sm';
-      btn.style.cssText += 'opacity:0.7;';
-      return;
-    }
+    if (added === 0) return 0;
 
     /* Sort descending */
     tableItems.sort(function (a, b) {
@@ -147,18 +141,30 @@
     backUrl = replaceUrlParameter(backUrl, 'startdate', '');
     $('#backButton').attr('href', backUrl);
 
-    updateLabel();
     updateSummary();
-
     document.title = tableItems.length + ' events - REST API History';
+
+    return added;
   }
 
-  btn.addEventListener('click', function () {
-    if (isLoading) return;
-    isLoading = true;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="fa fa-spinner fa-spin"></span> Loading...';
+  var stopRequested = false;
 
+  /* ---- Stop button (hidden until auto-loading) ---- */
+  var stopBtn = document.createElement('button');
+  stopBtn.id = 'stopLoadBtn';
+  stopBtn.type = 'button';
+  stopBtn.className = 'btn btn-warning btn-sm';
+  stopBtn.style.cssText = 'margin-left:4px; margin-top:-3px; display:none;';
+  stopBtn.innerHTML = '<span class="fa fa-stop"></span> Stop';
+  btn.after(stopBtn);
+
+  stopBtn.addEventListener('click', function () {
+    stopRequested = true;
+    stopBtn.disabled = true;
+    stopBtn.innerHTML = '<span class="fa fa-pause"></span> Stopping...';
+  });
+
+  function fetchNextPage() {
     var earliestTime = getEarliestTime();
     var earliestMoment = moment.utc(earliestTime).tz(ianaTimezone);
 
@@ -168,11 +174,7 @@
     var origFStartDate = $('#fStartDate').val();
     var origFEndDate = $('#fEndDate').val();
 
-    /* Set all four date fields in sync:
-       - end_time (UTC) = earliest record's create_time
-       - fEndDate (local) = same moment in local timezone
-       - start_time (UTC) = 1 month before end_time
-       - fStartDate (local) = 1 month before fEndDate */
+    /* Set all four date fields in sync */
     var startMomentUtc = moment.utc(earliestTime).subtract(1, 'month');
     var startMomentLocal = startMomentUtc.clone().tz(ianaTimezone);
 
@@ -189,32 +191,69 @@
     $('#fStartDate').val(origFStartDate);
     $('#fEndDate').val(origFEndDate);
 
+    var pageNum = Math.floor((tableItems.length - totalLoaded) / 50) + 1;
+    btn.innerHTML = '<span class="fa fa-spinner fa-spin"></span> Loading page ' + pageNum + '... (' + tableItems.length + ' so far)';
+
     $.ajax({
       url: 'searchresults',
       data: formData,
       type: 'get',
       complete: function (rData) {
-        isLoading = false;
-        btn.disabled = false;
         try {
           var obj = JSON.parse(rData.responseText);
           if (obj.errors) {
-            btn.innerHTML = '<span class="fa fa-exclamation-triangle"></span> Error - retry';
+            finishLoading('<span class="fa fa-exclamation-triangle"></span> Error - click to retry (' + tableItems.length + ')');
             console.error('Load More error:', obj.errors);
             return;
           }
           if (!obj.items || obj.items.length === 0) {
-            btn.innerHTML = '<span class="fa fa-check"></span> No more records';
+            finishLoading('<span class="fa fa-check"></span> All loaded (' + tableItems.length + ' total)');
             btn.disabled = true;
             return;
           }
-          mergeAndRender(obj.items);
+
+          var added = mergeAndRender(obj.items);
+
+          if (added === 0) {
+            /* Server returned items but all were duplicates — no progress */
+            finishLoading('<span class="fa fa-check"></span> All loaded (' + tableItems.length + ' total)');
+            btn.disabled = true;
+            return;
+          }
+
+          if (stopRequested) {
+            finishLoading('<span class="fa fa-download"></span> Load More (' + tableItems.length + ' loaded)');
+            return;
+          }
+
+          /* Continue to next page */
+          fetchNextPage();
+
         } catch (e) {
-          btn.innerHTML = '<span class="fa fa-exclamation-triangle"></span> Parse error';
+          finishLoading('<span class="fa fa-exclamation-triangle"></span> Parse error (' + tableItems.length + ')');
           console.error('Load More parse error:', e);
         }
       }
     });
+  }
+
+  function finishLoading(label) {
+    isLoading = false;
+    stopRequested = false;
+    btn.disabled = false;
+    btn.innerHTML = label;
+    stopBtn.style.display = 'none';
+    stopBtn.disabled = false;
+    stopBtn.innerHTML = '<span class="fa fa-stop"></span> Stop';
+  }
+
+  btn.addEventListener('click', function () {
+    if (isLoading) return;
+    isLoading = true;
+    stopRequested = false;
+    btn.disabled = true;
+    stopBtn.style.display = 'inline-block';
+    fetchNextPage();
   });
 
   updateLabel();
