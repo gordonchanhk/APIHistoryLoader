@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REST API History</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-table@1.22.1/dist/bootstrap-table.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<style>
+body { background-color: #fff; padding: 0; }
+header {
+  background-color: #0070ba;
+  background-image: linear-gradient(100deg, #0070ba, #1546a0);
+}
+header a, header a:hover { color: #fff; }
+.container-fluid { padding-right: 15px; padding-left: 15px; }
+
+:root { --my-orange: orange; }
+.badge-orange { color: white; background-color: var(--my-orange); }
+.btn-outline-orange { color: var(--my-orange); border-color: var(--my-orange); }
+.btn-outline-orange:hover, .btn-outline-orange:not(:disabled):not(.disabled):active,
+.btn-outline-orange:not(:disabled):not(.disabled).active {
+  color: white; background-color: var(--my-orange); border-color: var(--my-orange);
+}
+.btn-outline-orange:focus { box-shadow: 0 0 0 0.2rem rgba(255,193,7,0.5); }
+
+.btn { margin-left: 10px; }
+.btn-xsm { height: 27px; padding: 2px 6px; margin: 2px 2px; margin-bottom: 2px; font-size: 85%; }
+pre .btn-xsm { font-size: 13.6px; }
+a.btn-xsm { margin-right: .25rem; }
+
+table { font-size: 11pt; }
+#tableResults th { font-size: 90%; }
+
+.selectall { -webkit-user-select: all; -ms-user-select: all; user-select: all; }
+.nowrap { white-space: nowrap; }
+.text-break-all { word-break: break-all; }
+a.resourceLink { cursor: zoom-in; }
+
+pre:not(.btn), div.formattedDataContainer { font-size: 12px; }
+pre:not(.btn) { border: 1px solid lightgrey; border-radius: 9px; padding: 4px; }
+pre:not(.btn), div.prelike { margin-bottom: 6px; }
+pre button.btn { font-family: var(--font-family-sans-serif); }
+
+code {
+  font-size: 12px; font-variant-ligatures: none; line-height: 1.5;
+  tab-size: 4; word-wrap: break-word; white-space: pre-wrap; word-break: normal;
+  background-color: #f6f6f6; border: 1px solid #e2e2e2; border-radius: 3px;
+  color: rgb(224,30,90) !important; padding: 2px 3px 1px;
+}
+
+.headers-container pre, pre.requestbody, pre.responsebody {
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+.modal-body { padding: 0; padding-left: 15px; padding-right: 5px; overflow-y: auto; }
+.modal-footer { padding: 0.2rem; }
+.modal-dialog { top: 22px; margin-top: 0; margin-bottom: 10px; max-width: 80% !important; }
+.modal-header { display: block !important; padding: 7px !important; }
+.modal-body { max-height: calc(100vh - 125px); overflow-y: auto; background-color: ghostwhite; }
+
+.clientidlink, .clientidlink:hover {
+  z-index: 1; font-size: 70%; color: #bbb; vertical-align: -3px; user-select: all;
+}
+
+button[name="clearSearch"] { margin-left: 0; margin-right: -8px; }
+.bootstrap-table input.search-input { min-width: 220px; text-align: right; }
+
+.table-hover tbody tr:hover { background-color: rgba(0,0,0,0.040); }
+.table-striped tbody tr:nth-of-type(odd) { background-color: rgba(0,0,0,0.040); }
+
+.cursor-s { cursor: s-resize !important; }
+.cursor-nw { cursor: nw-resize !important; }
+
+.pseudo-focus-shadow { border-color: #80bdff; box-shadow: 0 0 0 0.2rem rgba(0,123,255,0.25); }
+
+pre a:hover:not(.badge):not(.btn):not(.dropdown-item) {
+  text-decoration: underline !important; text-decoration-style: dotted !important;
+}
+
+a.dottedhover { text-decoration-style: dotted; }
+a:hover { color: currentColor; }
+.nounderline, .nounderline:hover { text-decoration: none; }
+
+#humantime {
+  font-size: 98%; float: right; display: block; margin-top: 2px; margin-bottom: -2px;
+  background-color: transparent; height: 26px; color: black; padding: 2px; border: none;
+}
+
+#expandAllContainer {
+  position: fixed !important; top: unset !important; bottom: 5px !important;
+  width: 100%; margin-left: -67px;
+}
+#expandAllContainer .btn-outline-light { color: #ddd; }
+
+#summary-bar { margin: 12px 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="p-0 navbar navbar-dark shadow-sm" style="background-color:transparent !important;">
+    <div class="container-fluid d-flex justify-content-between" style="background-color:transparent; max-width:calc(100% - 100px);">
+      <span class="navbar-brand mb-0 h1" style="position:relative; font-size:150%; top:-2px;">
+        <span class="fa fa-rocket" style="position:relative; top:3px;"></span>
+        REST API History
+      </span>
+      <span class="d-md-block mr-2" style="color:#ccc; font-size:90%;">Local Viewer</span>
+    </div>
+  </div>
+</header>
+
+<div class="container mt-3" id="app-content">
+  <div id="file-picker" class="text-center" style="margin-top:40px;">
+    <div class="border rounded p-4" style="max-width:520px; margin:0 auto; background-color:ghostwhite; border-color:lightgrey !important;">
+      <h5 class="mb-3" style="color:#333;">Select data file(s) to load</h5>
+      <p class="text-muted mb-3" style="font-size:90%;">Choose one or more <code>.txt</code> files containing JSON arrays of API call records. Multiple files will be merged.</p>
+      <div class="custom-file" style="max-width:360px; margin:0 auto;">
+        <input type="file" class="custom-file-input" id="dataFileInput" accept=".txt,.json" multiple>
+        <label class="custom-file-label text-left" for="dataFileInput" style="overflow:hidden;">Choose file(s)...</label>
+      </div>
+      <div id="file-error" class="text-danger mt-2" style="display:none;"></div>
+    </div>
+  </div>
+  <div id="summary-bar"></div>
+  <div id="frmSearchResults"></div>
+</div>
+
+<!-- Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="dialogResults">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button style="float:right;" type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+        <div class="header-content-right" style="float:right;">
+          <div id="humantime" style="cursor:default;"></div>
+        </div>
+        <div class="modal-title" id="dialogResultsTitle" style="font-size:14px;"></div>
+      </div>
+      <div class="modal-body" style="padding-top:0; margin-top:-1px;">
+        <div id="results" style="clear:both;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-xsm btn-outline-info actionbutton" id="apiFmtData" style="display:none;">Formatted Data</button>
+        <button type="button" class="btn btn-xsm btn-outline-info actionbutton" id="apiRawData">Raw Data</button>
+        <button type="button" class="btn btn-xsm btn-outline-secondary actionbutton" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/moment-timezone@0.5.43/builds/moment-timezone-with-data.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.6.4/dist/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap-table@1.22.1/dist/bootstrap-table.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+<script>
+/* ── Globals ── */
+var tableItems = [];
+var rawData, fmtData;
+var spansDays = false;
+var ianaTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Los_Angeles';
+moment.tz.setDefault(ianaTimezone);
+
+var EXPAND_ALL_LABEL = '<span class="fa fa-plus"></span> all';
+var COLLAPSE_ALL_LABEL = '<span class="fa fa-minus"></span>';
+
+/* ── Formatting functions ── */
+
+function formatCreateTime(req_time, row, index) {
+  var fmt_time = req_time;
+  if (req_time.indexOf("Z") > -1 || req_time.indexOf("GMT") > -1 || req_time.indexOf("UTC") > -1) {
+    fmt_time = moment.utc(req_time).tz(ianaTimezone).format(
+      (spansDays ? '[<span style="font-size:85%; color:#bbb;">]MM-DD[</span>] ' : '') +
+      '[<span class="text-muted" style="font-weight:bold;">]HH:mm[</span>][<span style="color:#bbb; font-size:85%">]:ss[</span>]'
+    );
+  }
+  return '<div title="' + moment.utc(req_time).tz(ianaTimezone).format("YYYY-MM-DD HH:mm:ss z") +
+    '" class="text-muted" style="display:block; margin-left:0; margin-right:0px; font-size:95%; white-space:nowrap;">' + fmt_time + '</div>';
+}
+
+function formatCreateTimeTz(req_time, tz) {
+  var obj = { full: req_time, tz: '', humanreadable: '' };
+  if (req_time.indexOf("Z") > -1 || req_time.indexOf("GMT") > -1 || req_time.indexOf("UTC") > -1) {
+    obj.full = moment.utc(req_time).tz(tz).format("YYYY-MM-DD HH:mm:ss z");
+    obj.tz = moment.utc(req_time).tz(tz).format("z");
+    obj.humanreadable = moment.utc(req_time).tz(tz).format("MMMM Do HH:mm z");
+  }
+  return obj;
+}
+
+function formatUrl(value, row, index) {
+  var url = row['url'];
+  var reLongId = /\/(?=.*[A-Z])(?=.*[\d])[A-Za-z\d=_-]{40,}/;
+  if (reLongId.test(url)) {
+    url = url.replace(/(\/(?=.*[A-Z])(?=.*[\d])[A-Za-z\d=_-]{20})([A-Za-z\d=_-]*)/, function(match, p1) {
+      return p1 + '...';
+    });
+  }
+  return '<a class="url text-break-all resourceLink" href="javascript:void(0);">' + url + '</a>';
+}
+
+function formatMethod(value, row, index) {
+  value = String(value).toUpperCase();
+  var tag;
+  if (value.includes('POST')) tag = '<span class="text-muted">';
+  else if (value.includes('GET')) tag = '<span class="text-muted">';
+  else tag = '<span style="color:brown;">';
+  return tag + value + '</span>';
+}
+
+function formatStatus(value, row, index) {
+  return '<span style="font-size:110%; display:block; margin:-2px;">' + formatHTTPStatus(row['api_response']['status']) + '</span>';
+}
+
+function formatHTTPStatus(status) {
+  try {
+    status = parseInt(status);
+    if (status >= 500) return '<span style="padding:0 1px; color:red; font-size:100%; font-weight:normal;">' + status + '</span>';
+    else if (status >= 400) return '<span style="color:orange; font-size:100%; font-weight:normal;">' + status + '</span>';
+    else return '<span style="color:green; font-size:100%; font-weight:normal;">' + status + '</span>';
+  } catch (e) { return String(status); }
+}
+
+function getResourceId(value, row) {
+  if (!value) try { value = row.resource_id; } catch (e) {}
+  if (!value) try { value = row.api_request.body.id; } catch (e) {}
+  if (!value) try { value = row.api_response.body.sale_id; } catch (e) {}
+  if (!value) try { value = row.api_response.body.id; } catch (e) {}
+  if (!value) try { value = row.api_response.body.token_id; } catch (e) {}
+  if (!value) try { value = row.api_response.body.parent_payment; } catch (e) {}
+  if (!value) try { value = row.correlation_id; } catch (e) {}
+  return value;
+}
+
+function resourceSorterFunc(val1, val2, row1, row2) {
+  var a = getResourceId(val1, row1) || '';
+  var b = getResourceId(val2, row2) || '';
+  return (a < b) ? -1 : (a > b) ? 1 : 0;
+}
+
+function formatCorrId(value, row, index) {
+  var cid = row.correlation_id || '';
+  if (!cid || cid === 'xxxxxx') return '<span class="text-muted" style="font-size:85%;">' + cid + '</span>';
+  return '<span class="text-muted selectall text-monospace" style="font-size:85%;">' + cid + '</span>';
+}
+
+function formatResource(value, row, index) {
+  var rid = String(getResourceId(value, row, index));
+  var fSize = rid.length > 20 ? 75 : 90;
+  var cls = rid.length > 26 ? 'text-break-all' : 'nowrap';
+  return '<span class="' + cls + ' text-muted selectall" style="display:block; font-size:' + fSize + '%;">' + rid + '</span>';
+}
+
+function formatDuration(value) {
+  try {
+    var seconds = parseInt(value) / 1000;
+    if (isNaN(seconds)) return value;
+    return seconds.toFixed(1);
+  } catch (e) { return value; }
+}
+
+function fmtJson(jsondata) {
+  return (typeof jsondata !== 'undefined') ? JSON.stringify(jsondata, undefined, 4) : 'empty';
+}
+
+function fmtParam(p) { return '<span class="hljs-attr">' + p + '</span>'; }
+function fmtValue(v) { return '<span class="hljs-string">' + v + '</span>'; }
+
+function convertGMTtoTime(dateInString) {
+  var fullDate = dateInString, tz;
+  if (dateInString.indexOf("GMT") > -1) {
+    fullDate = moment.utc(dateInString, "ddd, DD MMM YYYY HH:mm:ss ZZ").tz(ianaTimezone).format("ddd, DD MMM YYYY HH:mm:ss z");
+    tz = '-' + moment.utc(dateInString, "ddd, DD MMM YYYY HH:mm:ss ZZ").tz(ianaTimezone).format("z");
+  }
+  return { fullDate: fullDate, tz: tz };
+}
+
+/* ── Copy dropdown ── */
+function getCopyDropdown(corrId) {
+  if (!corrId || corrId === 'xxxxxx') return '';
+  var b = '<div data-corrid="' + corrId + '" class="dropdown copybuttondropdown">';
+  b += '<button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button" style="position:absolute; right:10px;top:10px;" data-toggle="dropdown">';
+  b += '<i class="fa fa-clipboard" style="position:relative;top:1px;"></i> <span class="dropdownlabel">Copy</span></button>';
+  b += '<div style="padding:0; margin:0; font-family:var(--font-family-sans-serif);" class="dropdown-menu">';
+  b += '<a data-corrid="' + corrId + '" class="dropdown-item copy-data copy-email" style="padding:2px;margin:1px;text-align:center;" href="javascript:void(0);">For Email/Messaging</a>';
+  b += '<a data-corrid="' + corrId + '" class="dropdown-item copy-data copy-rawrequest" style="padding:2px;margin:1px;text-align:center;" href="javascript:void(0);">Request only</a>';
+  b += '<a data-corrid="' + corrId + '" class="dropdown-item copy-data copy-rawresponse" style="padding:2px;margin:1px;text-align:center;" href="javascript:void(0);">Response only</a>';
+  b += '</div></div>';
+  return b;
+}
+
+function copyData(event) {
+  event.preventDefault();
+  var $this = $(this);
+  var corrId = $this.data('corrid');
+  var row;
+  tableItems.forEach(function(v) { if (v.correlation_id == corrId) { row = v; } });
+  if (!row) return;
+
+  var req_body = row.api_request.body;
+  var res_body = row.api_response.body;
+  var data;
+  var EOL = '\n';
+
+  if ($this.hasClass('copy-rawrequest')) data = fmtJson(req_body);
+  else if ($this.hasClass('copy-rawresponse')) data = fmtJson(res_body);
+  else if ($this.hasClass('copy-email')) {
+    data = 'Event ' + (row.correlation_id || '') + ' on ' + formatCreateTimeTz(row.create_time, ianaTimezone).full + EOL;
+    data += 'Request to ' + row.url + EOL + EOL;
+    data += req_body ? fmtJson(req_body) : '(empty body)';
+    data += EOL + EOL + 'PayPal response: ' + EOL + EOL;
+    data += fmtJson(res_body);
+  }
+
+  try {
+    var label = $this.parent().parent().find('.dropdownlabel');
+    navigator.clipboard.writeText(data).then(function() {
+      label.text('Copied.');
+    }, function() { label.text('Clipboard failure'); });
+  } catch (e) { console.log(e); }
+}
+
+/* ── Detail view (inline expand) ── */
+function formatDetailView(index, row) {
+  return getFormattedData(index, row, false);
+}
+
+function getFormattedData(index, row, isModal) {
+  var dHtml = '<div style="position:relative;">';
+  var req = row.api_request;
+  var res = row.api_response;
+  var accNum = row.account_number;
+  var clientId = row.client_id;
+  var corrId = row.correlation_id;
+
+  if (navigator.clipboard && navigator.clipboard.writeText) dHtml += getCopyDropdown(corrId);
+
+  var showHeadersStr = corrId;
+  if (showHeadersStr === 'xxxxxx') showHeadersStr = 'Headers';
+
+  var btnClass = isModal ? 'btn-outline-secondary' : 'btn-outline-light';
+  dHtml += '<button class="btn btn-xsm ' + btnClass + ' actionbutton showHeaders cursor-s" style="font-family:var(--font-family-monospace);float:left;margin-top:4px; margin-left:3px; margin-right:8px; margin-bottom:5px;">' + showHeadersStr + '</button>';
+
+  var reqTimeObj = formatCreateTimeTz(row.create_time, ianaTimezone);
+
+  if (isModal) {
+    var displayClientId = (clientId && clientId.length > 20) ? clientId.slice(0, 4) + '...' + clientId.slice(-6) : clientId;
+    var userAgent = row.api_request && row.api_request.header ? row.api_request.header['user-agent'] : null;
+
+    /* Resource pills */
+    var resourceId = getResourceId(null, row);
+    var pill_class = "badge badge-pill badge-info ml-1 text-white";
+    var pills = '';
+    var tags = [resourceId].concat(row.tag_id || []);
+    var seen = {};
+    tags.forEach(function(tag) {
+      if (!tag || tag === 'xxxxxx' || tag === '*****' || seen[tag]) return;
+      seen[tag] = true;
+      var wrapClass = (tag.length < 39) ? 'nowrap' : 'text-break-all';
+      pills += '<span class="' + pill_class + ' ' + wrapClass + '" style="font-size:90%; padding-top:4px; padding-bottom:2px;">' + tag + '</span>';
+    });
+
+    dHtml += '<div class="prelike text-wrap" style="float:left;">';
+    dHtml += '<b></b>' + row.url + pills + '<br/>';
+    dHtml += '<b>Method</b><span style="font-size:70%;"> </span><span style="color:#888">' + req.method + '</span>';
+    dHtml += '<span style="font-weight:bold;vertical-align:8%"> | </span>';
+    dHtml += '<b>Status</b><span style="font-size:60%;"> </span><span style="font-size:110%;vertical-align:-2%">' + formatHTTPStatus(res.status) + '</span>';
+    dHtml += '<span style="font-weight:bold;vertical-align:8%"> | </span>';
+    dHtml += '<span style="color:#888;">' + reqTimeObj.full + '</span>';
+
+    var reqTimeObjLocal = formatCreateTimeTz(row.create_time, ianaTimezone);
+    dHtml += '</div>';
+  } else {
+    var duration;
+    if (res.duration_time && res.duration_time !== 'xxxxxx') duration = res.duration_time;
+    dHtml += '<div style="margin-top:10px;margin-left:10px;">';
+    if (duration) dHtml += '<span style="font-family:var(--font-family-sans-serif); font-size:115%;">' + formatDuration(duration) + '</span><span class="text-muted" style="font-family:var(--font-family-sans-serif)"> seconds response time</span>';
+    dHtml += '</div>';
+  }
+
+  dHtml += '<div style="clear:both;"/>';
+
+  /* Headers (collapsed by default) */
+  var req_header = req.header || {};
+  dHtml += '<div style="display:none;" class="headers-container">';
+  dHtml += '<div style="display:table-cell; vertical-align:middle;"><div style="display:inline-block;padding-bottom:2px;padding-top:5px;"><b>client_id:</b></div> <div style="display:inline; margin:0; color:#888">' + (clientId || '') + '</div></div><div style="clear:both;"></div>';
+  dHtml += '<b>Request headers</b><br/><pre class="requestheader jsoncode plaintext" style="overflow-x:hidden;">';
+  for (var rp in req_header) {
+    dHtml += fmtParam(rp) + ': ' + fmtValue(req_header[rp]) + '<br/>';
+  }
+  dHtml += '</pre>';
+
+  var res_header = res.header || {};
+  dHtml += '<b>Response headers</b><br/><pre class="responseheader jsoncode plaintext" style="overflow-x:hidden;">';
+  for (var sp in res_header) {
+    if (sp === "Date") {
+      var ptDate = convertGMTtoTime(res_header[sp]);
+      dHtml += fmtParam(sp) + ': ' + fmtValue(ptDate.fullDate) + '<br/>';
+    } else {
+      dHtml += fmtParam(sp) + ': ' + fmtValue(res_header[sp]) + '<br/>';
+    }
+  }
+  dHtml += '</pre></div>';
+
+  /* Request body */
+  var req_body = req.body;
+  dHtml += '<b>Request ';
+  if (isModal) {
+    dHtml += 'body </b>';
+    var userAgent2 = row.api_request && row.api_request.header ? row.api_request.header['user-agent'] : null;
+    if (userAgent2) {
+      if (/Mozilla/i.test(userAgent2)) {
+        dHtml += '<span style="color:orange;">from a browser: </span><span style="color:#bbb;">' + userAgent2 + '</span>';
+      } else {
+        dHtml += '<span style="color:#bbb; font-style:italic;">' + userAgent2 + '</span>';
+      }
+    }
+  } else {
+    dHtml += '</b>';
+  }
+  dHtml += '<br/><pre class="requestbody jsoncode" style="max-height:500px;">' + fmtJson(req_body) + '</pre>';
+
+  /* Response body */
+  dHtml += '<b>Response ' + (isModal ? 'body ' : '') + '</b><br/>';
+  dHtml += '<pre class="responsebody jsoncode" style="max-height:500px;">' + fmtJson(res.body) + '</pre>';
+
+  dHtml = '<pre>' + dHtml + '</pre></div>';
+  return dHtml;
+}
+
+/* ── Toggle headers ── */
+function toggleHeaders() {
+  var nowVisible = $(this).parent().find('.headers-container').toggle().is(':visible');
+  if (nowVisible) {
+    $(this).addClass('btn-info cursor-nw').removeClass('btn-outline-info btn-outline-secondary btn-outline-light cursor-s');
+  } else {
+    $(this).addClass('btn-outline-info cursor-s').removeClass('btn-info cursor-nw');
+  }
+}
+
+/* ── Syntax highlighting ── */
+function addCustomHighlighting() {
+  document.querySelectorAll('.jsoncode:not(.highlighted)').forEach(function(block) {
+    hljs.highlightElement(block);
+  });
+
+  /* Highlight identifiers (PayPal IDs) in request/response bodies */
+  document.querySelectorAll('pre.requestbody:not(.highlighted), pre.responsebody:not(.highlighted)').forEach(function(block) {
+    block.innerHTML = highlightIdentifiers(block.innerHTML);
+  });
+
+  /* Detect enum/constant fields */
+  var attrs = $('.jsoncode:not(.highlighted) span.hljs-attr');
+  var enums = ['intent', 'status', 'landing_page', 'reason_code', 'protection_eligibility', 'disbursement_mode', 'carrier'];
+  attrs.filter(function() {
+    var txt = $(this).text();
+    for (var i = 0; i < enums.length; i++) { if (txt.includes('"' + enums[i] + '"')) return true; }
+    return false;
+  }).each(function() {
+    var value = $(this).next();
+    if ($(this).text() === '"rel"') value.wrapInner('<span class="hljs-literal"/>');
+    else {
+      var valText = value.text().replace(/"|'/g, '');
+      if (!['***', '*****', 'xxxxxx'].includes(valText)) value.wrapInner('<span class="hljs-keyword"/>');
+    }
+  });
+
+  /* _type, _method, _action, _status fields */
+  attrs.filter(function() { return /(_type|_method|_action|_status)("|')$/i.test($(this).text()); }).each(function() {
+    var valueSpan = $(this).next();
+    if (valueSpan.hasClass('hljs-attr')) return;
+    var valText = valueSpan.text().replace(/"|'/g, '');
+    if (!['***', '*****', 'xxxxxx'].includes(valText)) valueSpan.wrapInner('<span class="hljs-keyword"/>');
+  });
+
+  /* Detect UPPER_CASE constants */
+  $('pre.requestbody:not(.highlighted), pre.responsebody:not(.highlighted)').find('span.hljs-string:contains("_")').each(function() {
+    if ($(this).html().trim().match(/^"[A-Z,_]*"$/)) {
+      var valText = $(this).text().replace(/"|'/g, '');
+      if (!['***', '*****', 'xxxxxx'].includes(valText)) $(this).wrapInner('<span class="hljs-keyword"></span>');
+    }
+  });
+
+  /* Numbers */
+  $('pre.requestbody:not(.highlighted), pre.responsebody:not(.highlighted)').find('span.hljs-number').addClass("hljs-meta");
+
+  /* Messages and error keys */
+  var messageKeys = ['description', 'issue', 'message', 'name', 'type', 'error', 'error_description'];
+  attrs.filter(function() {
+    var txt = $(this).text();
+    for (var i = 0; i < messageKeys.length; i++) { if (txt.includes('"' + messageKeys[i] + '"')) return true; }
+    return false;
+  }).each(function() {
+    var valueSpan = $(this).next();
+    if (valueSpan.hasClass('hljs-attr')) return;
+    var valText = valueSpan.text().replace(/"|'/g, '');
+    if (!['***', '*****', 'xxxxxx'].includes(valText)) valueSpan.wrapInner('<span class="hljs-keyword"></span>');
+  });
+
+  document.querySelectorAll('.jsoncode').forEach(function(block) {
+    block.classList.add('highlighted');
+  });
+}
+
+function highlightIdentifiers(jsondata) {
+  try {
+    /* PayPal IDs like EC-, PROD-, BA-, etc. */
+    var ret = jsondata.replace(/((EC)|(PROD)|(BA)|(TEMP))-[A-Z\d]{17}/gm, function(s) {
+      return '<span class="hljs-keyword"><span class="hljs-literal">' + s + '</span></span>';
+    });
+    /* Standard 17-char PayPal IDs */
+    ret = ret.replace(/["/=]((?=.*[A-Z])(?=.*[\d])([A-Z\d]{17})|((?=.*[A-Z])(?=.*[\d])[A-Z\d]{13}))(["/\n &?]|$)/gm, function(match) {
+      var smart = match.match(/(^[^A-Z0-9a-z]*)([A-Z0-9a-z-]*)(.*)/);
+      if (smart && smart.length > 2) {
+        return smart[1] + '<span class="hljs-keyword"><span class="hljs-literal">' + smart[2] + '</span></span>' + (smart[3] || '');
+      }
+      return match;
+    });
+    return ret;
+  } catch (e) { return jsondata; }
+}
+
+/* ── Modal / Raw data toggle ── */
+function showFmtDetails() {
+  $('#apiRawData').show();
+  $('#apiFmtData').hide();
+  $('#results').html(fmtData);
+  $('.showHeaders').unbind('click').click(toggleHeaders);
+  try { addCustomHighlighting(); } catch (e) { console.error(e); }
+}
+
+function showRawDetails() {
+  $('#results').html(rawData);
+}
+
+/* ── Click URL event (opens modal) ── */
+window.clickUrlEvent = {
+  'click .url': function(e, value, row, index) {
+    var corrId = row.correlation_id;
+    var accNum = row.account_number;
+    var clientId = row.client_id;
+    var displayClientId = (clientId && clientId.length > 20) ? clientId.slice(0, 4) + '...' + clientId.slice(-6) : clientId;
+
+    fmtData = getFormattedData(index, row, true);
+    rawData = '<pre>' + JSON.stringify(row, undefined, 4) + '</pre>';
+
+    var reqTimeObj = formatCreateTimeTz(row.create_time, ianaTimezone);
+    $('#dialogResults #humantime').text(reqTimeObj.humanreadable);
+
+    var title = '<span class="btn btn-xsm btn-outline-primary actionbutton" style="margin-right:5px; float:left;"><span style="font-size:90%; font-family:var(--font-family-monospace)">' + (accNum || '') + '</span></span>';
+    title += '<span class="clientidlink text-monospace" style="color:#888; word-break:break-all;">' + (clientId || '') + '</span>';
+    $('#dialogResultsTitle').html(title);
+
+    showFmtDetails();
+    $('#dialogResults').modal('show');
+    $('a.copy-data').unbind('click').click(copyData);
+  }
+};
+
+/* ── Custom search ── */
+function customTableSearch(data, text) {
+  text = String(text).trim();
+  return data.filter(function(row) {
+    var strdata = JSON.stringify(row);
+    return strdata.includes(text) || strdata.includes(text.replace(/\s+/gm, ''));
+  });
+}
+
+/* ── Render table ── */
+function renderTable(items) {
+  tableItems = items;
+
+  var has_success = 0, has_failure = 0, has_error = 0;
+  items.forEach(function(v) {
+    try {
+      var val = parseInt(v.http_status);
+      if (val >= 200 && val < 300) has_success++;
+      else if (val >= 400 && val < 500) has_failure++;
+      else if (val >= 500) has_error++;
+    } catch (e) {}
+  });
+
+  /* Summary bar */
+  var m_earliest = moment(items[items.length - 1].create_time);
+  var m_latest = moment(items[0].create_time);
+  var days = m_latest.diff(m_earliest, 'days');
+  var hours = m_latest.diff(m_earliest, 'hours');
+  var mins = m_latest.diff(m_earliest, 'minutes');
+  var secs = m_latest.diff(m_earliest, 'seconds');
+  spansDays = (days > 1);
+
+  var summary = '';
+  if (items.length === 1) summary = '1 event';
+  else {
+    summary = items.length + ' events spanning ';
+    if (days) summary += days + ' days';
+    else if (hours) summary += hours + ' hours';
+    else if (mins) summary += mins + ' minutes';
+    else summary += secs + ' seconds';
+  }
+  $('#summary-bar').html('<div class="alert alert-info" style="border-color:lightgrey; text-align:center; max-width:510px; margin:0 auto; margin-bottom:0;">' + summary + '</div>');
+
+  /* Toolbar HTML */
+  var has_multiple = (has_success && has_failure) || (has_success && has_error) || (has_failure && has_error);
+  var out = '';
+  if (has_multiple) {
+    out += '<div id="tabletoolbar" class="btn-group btn-group-toggle" data-toggle="buttons">';
+    if (has_success) out += '<label class="btn btn-m btn-outline-success" style="border-color:lightgrey;" data-filter-value=\'"http_status":2\'><input type="radio" name="options" autocomplete="off"> <span class="badge badge-success">' + has_success + '</span> Success</label>';
+    if (has_failure) out += '<label class="btn btn-m btn-outline-orange" style="border-color:lightgrey;" data-filter-value=\'"http_status":4\'><input type="radio" name="options" autocomplete="off"> <span class="badge badge-orange">' + has_failure + '</span> Failed</label>';
+    if (has_error)   out += '<label class="btn btn-m btn-outline-danger" style="border-color:lightgrey;" data-filter-value=\'"http_status":5\'><input type="radio" name="options" autocomplete="off"> <span class="badge badge-danger">' + has_error + '</span> Errors</label>';
+    out += '</div>';
+  }
+
+  out += '<table class="table table-sm table-striped table-bordered table-hover" id="tableResults" ' +
+    'data-pagination="true" data-detail-view="true" data-detail-formatter="formatDetailView" ' +
+    'data-detail-view-by-click="false" data-detail-view-icon="true" ' +
+    'data-buttons-class="outline-secondary" data-pagination-v-align="top" ' +
+    'data-toolbar="#tabletoolbar" data-toolbar-align="right" ' +
+    'data-page-size="100" data-page-list="[10, 15, 20, 50, 100, All]" ' +
+    'data-search="true" data-custom-search="customTableSearch" ' +
+    'data-show-search-clear-button="true" ' +
+    'data-hover="true" data-striped="true" data-sort-name="create_time" data-sort-order="desc">' +
+    '<thead><tr>' +
+    '<th data-field="create_time" data-align="center" data-formatter="formatCreateTime" data-sortable="true" data-searchable="false">Timestamp</th>' +
+    '<th data-field="url" data-align="left" data-formatter="formatUrl" data-sortable="true" data-events="clickUrlEvent">URL Path</th>' +
+    '<th data-field="resource_id" data-align="center" data-formatter="formatResource" data-sortable="true" data-sorter="resourceSorterFunc">ID</th>' +
+    '<th data-field="correlation_id" data-align="center" data-formatter="formatCorrId" data-sortable="true">Corr ID</th>' +
+    '<th data-field="api_request.method" data-align="center" data-sortable="true" data-formatter="formatMethod">Method</th>' +
+    '<th data-field="http_status" data-align="center" data-sortable="true" data-formatter="formatStatus">Status</th>' +
+    '</tr></thead></table>';
+
+  var container = document.getElementById('frmSearchResults');
+  container.innerHTML = '';
+  var p = document.createElement('p');
+  p.innerHTML = out;
+  container.appendChild(p);
+
+  $('#tableResults').bootstrapTable({
+    data: items,
+    formatSearch: function() { return 'JSON / Raw Data search'; },
+    onResetView: function() {
+      if (!$('tr.detail-view').length) {
+        $('#expandAllInnerText').html(EXPAND_ALL_LABEL);
+      }
+    },
+    onExpandRow: function() {
+      addCustomHighlighting();
+      $('.showHeaders').unbind('click').click(toggleHeaders);
+      $('a.copy-data').unbind('click').click(copyData);
+    }
+  });
+
+  /* Expand all button */
+  var expandAll = '<div id="expandAllContainer" class="btn-group-toggle" style="position:relative; top:46px;" data-toggle="buttons">' +
+    '<label class="btn btn-sm btn-outline-light">' +
+    '<input id="expandAll" type="checkbox" autocomplete="off"/> ' +
+    '<span id="expandAllInnerText">' + EXPAND_ALL_LABEL + '</span>' +
+    '</label></div>';
+  $('.fixed-table-toolbar').prepend(expandAll);
+
+  function asyncExpand(idx) {
+    if ($('#expandAll').prop('checked')) {
+      $('#tableResults').bootstrapTable('expandRow', idx);
+    }
+  }
+
+  $('#expandAll').change(function() {
+    if ($(this).prop('checked')) {
+      $('tr[data-index]').each(function(i) {
+        var idx = $(this).data('index');
+        if (idx < 2) asyncExpand(idx);
+        else $(document).ready(function() { asyncExpand(idx); });
+      });
+      $('#expandAllInnerText').html(COLLAPSE_ALL_LABEL);
+    } else {
+      $('#tableResults').bootstrapTable('collapseAllRows');
+      $('#expandAllInnerText').html(EXPAND_ALL_LABEL);
+    }
+  });
+
+  /* Search input -> filter button sync */
+  $('.bootstrap-table input.search-input').on('keyup change', function() {
+    var curval = $(this).val();
+    if (!curval.includes('http_status')) clearHttpFilters();
+    else updateHttpFilters(curval);
+  });
+
+  $('.bootstrap-table .btn[name=clearSearch]').click(function() { clearHttpFilters(); });
+
+  $('#tabletoolbar label.btn').click(function() {
+    var searchInput = $('.bootstrap-table input.search-input').val($(this).data('filter-value'));
+    updateHttpFilters(searchInput.val());
+    searchInput.blur();
+  });
+
+  /* Raw data toggle in modal */
+  $('#apiRawData').off('click').on('click', function() {
+    showRawDetails();
+    $(this).hide();
+    $('#apiFmtData').show();
+  });
+  $('#apiFmtData').off('click').on('click', function() {
+    showFmtDetails();
+  });
+}
+
+function clearHttpFilters() {
+  $('.bootstrap-table input.search-input').removeClass('pseudo-focus-shadow');
+  $('#tabletoolbar label.btn').removeClass('active').find('input').prop('checked', false);
+}
+
+function updateHttpFilters(curval) {
+  $('.bootstrap-table input.search-input').removeClass('pseudo-focus-shadow');
+  $('#tabletoolbar label.btn').each(function() {
+    var $this = $(this);
+    var input = $this.find('input');
+    if (curval == $this.data('filter-value')) {
+      input.prop('checked', true);
+      $this.addClass('active');
+    } else {
+      input.prop('checked', false);
+      $this.removeClass('active');
+    }
+  });
+}
+
+/* ── Load data from file picker ── */
+function loadAndRender(allData) {
+  if (!allData || !allData.length) {
+    $('#file-error').text('No records found in the selected file(s).').show();
+    return;
+  }
+  $('#file-picker').hide();
+  $('#file-error').hide();
+  document.title = allData.length + ' events - REST API History';
+  allData.sort(function(a, b) { return new Date(b.create_time).getTime() - new Date(a.create_time).getTime(); });
+  renderTable(allData);
+}
+
+$(document).ready(function() {
+  $('#dataFileInput').on('change', function(e) {
+    var files = e.target.files;
+    if (!files.length) return;
+
+    /* Update label with file names */
+    var names = [];
+    for (var i = 0; i < files.length; i++) names.push(files[i].name);
+    $(this).next('.custom-file-label').text(names.join(', '));
+
+    var allData = [];
+    var loaded = 0;
+    var errorOccurred = false;
+
+    for (var i = 0; i < files.length; i++) {
+      (function(file) {
+        var reader = new FileReader();
+        reader.onload = function(ev) {
+          if (errorOccurred) return;
+          try {
+            var parsed = JSON.parse(ev.target.result);
+            if (Array.isArray(parsed)) {
+              allData = allData.concat(parsed);
+            } else {
+              throw new Error('File content is not a JSON array');
+            }
+          } catch (err) {
+            errorOccurred = true;
+            $('#file-error').text('Error parsing "' + file.name + '": ' + err.message).show();
+            return;
+          }
+          loaded++;
+          if (loaded === files.length) {
+            loadAndRender(allData);
+          }
+        };
+        reader.onerror = function() {
+          errorOccurred = true;
+          $('#file-error').text('Error reading file: ' + file.name).show();
+        };
+        reader.readAsText(file);
+      })(files[i]);
+    }
+  });
+});
+</script>
+</body>
+</html>

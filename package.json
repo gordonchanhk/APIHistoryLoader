@@ -1,0 +1,13 @@
+{
+  "name": "api-history-viewer",
+  "version": "1.0.0",
+  "description": "Local REST API History viewer",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.0",
+    "open": "^8.4.0"
+  }
+}
