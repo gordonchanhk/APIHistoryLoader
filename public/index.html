@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REST API History</title>
+<title>Local REST API Explorer</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-table@1.22.1/dist/bootstrap-table.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
@@ -105,7 +105,7 @@ a:hover { color: currentColor; }
     <div class="container-fluid d-flex justify-content-between" style="background-color:transparent; max-width:calc(100% - 100px);">
       <span class="navbar-brand mb-0 h1" style="position:relative; font-size:150%; top:-2px;">
         <span class="fa fa-rocket" style="position:relative; top:3px;"></span>
-        REST API History
+        Local REST API Explorer
       </span>
       <span class="d-md-block mr-2" style="color:#ccc; font-size:90%;">Local Viewer</span>
     </div>
@@ -125,6 +125,12 @@ a:hover { color: currentColor; }
     </div>
   </div>
   <div id="summary-bar"></div>
+  <blockquote id="tools-bar" class="border rounded px-3 py-2 mb-2" style="display:none; background-color:#f8f9fa; border-color:#dee2e6 !important;">
+    <span class="text-muted mr-2" style="font-size:90%;">Tools:</span>
+    <button type="button" class="btn btn-sm btn-outline-danger" id="btnErrorAnalysis"><span class="fa fa-exclamation-triangle"></span> Error Analysis</button>
+    <button type="button" class="btn btn-sm btn-outline-primary" id="btnEndpointCount"><span class="fa fa-bar-chart"></span> Endpoint Count</button>
+    <button type="button" class="btn btn-sm btn-outline-info" id="btnClientIds"><span class="fa fa-id-card-o"></span> Client IDs</button>
+  </blockquote>
   <div id="frmSearchResults"></div>
 </div>
 
@@ -146,6 +152,60 @@ a:hover { color: currentColor; }
         <button type="button" class="btn btn-xsm btn-outline-info actionbutton" id="apiFmtData" style="display:none;">Formatted Data</button>
         <button type="button" class="btn btn-xsm btn-outline-info actionbutton" id="apiRawData">Raw Data</button>
         <button type="button" class="btn btn-xsm btn-outline-secondary actionbutton" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Error Analysis Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="errorAnalysisModal">
+  <div class="modal-dialog" style="max-width:700px !important; top:40px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" style="margin:0;"><span class="fa fa-exclamation-triangle text-danger"></span> Error Analysis (422 Responses)</h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 200px); background-color:#fff;">
+        <div id="errorAnalysisContent"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Endpoint Count Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="endpointCountModal">
+  <div class="modal-dialog" style="max-width:750px !important; top:40px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" style="margin:0;"><span class="fa fa-bar-chart text-primary"></span> API Endpoint Count</h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 200px); background-color:#fff;">
+        <div id="endpointCountContent"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Client IDs Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="clientIdsModal">
+  <div class="modal-dialog" style="max-width:800px !important; top:40px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" style="margin:0;"><span class="fa fa-id-card-o text-info"></span> Client IDs</h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 200px); background-color:#fff;">
+        <div id="clientIdsContent"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
       </div>
     </div>
   </div>
@@ -730,6 +790,277 @@ function updateHttpFilters(curval) {
   });
 }
 
+/* ── Open filtered records in a new window ── */
+function openFilteredWindow(records, title) {
+  var w = window.open('', '_blank');
+  if (!w) { alert('Popup blocked. Please allow popups for this site.'); return; }
+
+  var rows = '';
+  records.forEach(function(r) {
+    var ts = moment.utc(r.create_time).tz(ianaTimezone).format('YYYY-MM-DD HH:mm:ss z');
+    var method = (r.api_request.method || '').toUpperCase();
+    var status = parseInt(r.http_status || r.api_response.status);
+    var statusColor = status >= 500 ? 'red' : status >= 400 ? 'orange' : 'green';
+    var corrId = r.correlation_id || '';
+    var issueList = '';
+    try {
+      var details = (r.api_response.body && r.api_response.body.details) || [];
+      details.forEach(function(d) { if (d.issue) issueList += (issueList ? ', ' : '') + d.issue; });
+    } catch(e) {}
+
+    var reqBody = '';
+    try { reqBody = r.api_request.body ? JSON.stringify(r.api_request.body, null, 2) : ''; } catch(e) {}
+    var resBody = '';
+    try { resBody = r.api_response.body ? JSON.stringify(r.api_response.body, null, 2) : ''; } catch(e) {}
+
+    /* Escape HTML for safe embedding */
+    function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+    rows += '<tr>' +
+      '<td style="white-space:nowrap;">' + esc(ts) + '</td>' +
+      '<td style="word-break:break-all;">' + esc(r.url) + '</td>' +
+      '<td><code>' + esc(corrId) + '</code></td>' +
+      '<td>' + esc(method) + '</td>' +
+      '<td style="color:' + statusColor + '; font-weight:bold;">' + status + '</td>' +
+      '<td style="font-size:85%;">' + esc(issueList) + '</td>' +
+      '</tr>' +
+      '<tr class="detail-row"><td colspan="6">' +
+      '<details><summary style="cursor:pointer; color:#007bff; font-size:90%; margin-bottom:4px;">Request / Response</summary>' +
+      '<b>Request body</b><pre style="background:#282c34; color:#abb2bf; padding:8px; border-radius:6px; font-size:12px; max-height:300px; overflow:auto;">' + esc(reqBody || 'empty') + '</pre>' +
+      '<b>Response body</b><pre style="background:#282c34; color:#abb2bf; padding:8px; border-radius:6px; font-size:12px; max-height:300px; overflow:auto;">' + esc(resBody || 'empty') + '</pre>' +
+      '</details></td></tr>';
+  });
+
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + title.replace(/</g,'&lt;') + '</title>' +
+    '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">' +
+    '<style>body{padding:20px;font-size:13px;} pre{white-space:pre-wrap;word-break:break-all;} tr.detail-row{background:#f8f9fa !important;} table{font-size:12px;}</style></head><body>' +
+    '<h5>' + title.replace(/</g,'&lt;') + ' <span class="badge badge-secondary">' + records.length + ' record(s)</span></h5>' +
+    '<table class="table table-sm table-bordered table-striped mt-3">' +
+    '<thead class="thead-dark"><tr><th>Timestamp</th><th>URL</th><th>Corr ID</th><th>Method</th><th>Status</th><th>Issue(s)</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table></body></html>';
+
+  w.document.write(html);
+  w.document.close();
+}
+
+/* ── Error Analysis ── */
+function showErrorAnalysis() {
+  var errors = tableItems.filter(function(r) {
+    var s = parseInt(r.http_status || r.api_response.status);
+    return s === 422;
+  });
+
+  if (!errors.length) {
+    $('#errorAnalysisContent').html('<div class="alert alert-success mb-0">No 422 errors found in the loaded data.</div>');
+    $('#errorAnalysisModal').modal('show');
+    return;
+  }
+
+  /* Count by issue */
+  var issueCounts = {};
+  var issueDesc = {};
+  errors.forEach(function(r) {
+    var details = (r.api_response.body && r.api_response.body.details) || [];
+    if (!details.length) {
+      var key = '(no details)';
+      issueCounts[key] = (issueCounts[key] || 0) + 1;
+    }
+    details.forEach(function(d) {
+      var issue = d.issue || '(unknown)';
+      issueCounts[issue] = (issueCounts[issue] || 0) + 1;
+      if (d.description && !issueDesc[issue]) issueDesc[issue] = d.description;
+    });
+  });
+
+  /* Sort by count descending */
+  var sorted = Object.keys(issueCounts).sort(function(a, b) {
+    return issueCounts[b] - issueCounts[a];
+  });
+
+  var totalIssues = 0;
+  sorted.forEach(function(k) { totalIssues += issueCounts[k]; });
+
+  var html = '<p class="mb-2"><strong>' + errors.length + '</strong> request(s) returned <span class="text-danger font-weight-bold">422</span>, totalling <strong>' + totalIssues + '</strong> issue(s):</p>';
+  html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
+  html += '<thead class="thead-light"><tr><th style="width:40%;">Issue</th><th style="width:50%;">Description</th><th style="width:10%; text-align:center;">Count</th></tr></thead><tbody>';
+
+  /* Group records by issue for drill-down */
+  var issueRecords = {};
+  errors.forEach(function(r) {
+    var details = (r.api_response.body && r.api_response.body.details) || [];
+    if (!details.length) {
+      var key = '(no details)';
+      if (!issueRecords[key]) issueRecords[key] = [];
+      issueRecords[key].push(r);
+    }
+    details.forEach(function(d) {
+      var issue = d.issue || '(unknown)';
+      if (!issueRecords[issue]) issueRecords[issue] = [];
+      issueRecords[issue].push(r);
+    });
+  });
+
+  sorted.forEach(function(issue) {
+    var desc = issueDesc[issue] || '';
+    var pct = ((issueCounts[issue] / totalIssues) * 100).toFixed(0);
+    html += '<tr class="issue-row" style="cursor:pointer;" data-issue="' + issue.replace(/"/g,'&quot;') + '">';
+    html += '<td><code style="font-size:12px; word-break:break-all;">' + issue + '</code></td>';
+    html += '<td class="text-muted" style="font-size:90%;">' + desc + '</td>';
+    html += '<td style="text-align:center;"><span class="badge badge-danger">' + issueCounts[issue] + '</span> <span class="text-muted" style="font-size:80%;">' + pct + '%</span></td>';
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a row to view its records in a new window.</p>';
+
+  $('#errorAnalysisContent').html(html);
+
+  /* Drill-down click handler */
+  $('#errorAnalysisContent .issue-row').on('click', function() {
+    var issue = $(this).data('issue');
+    var records = issueRecords[issue] || [];
+    openFilteredWindow(records, '422 Error: ' + issue);
+  });
+
+  $('#errorAnalysisModal').modal('show');
+}
+
+/* ── Endpoint Count ── */
+function patternToRegex(pattern) {
+  /* Pattern format: "METHOD /path" or just "/path".
+     * matches any single path segment. */
+  var parts = pattern.split(' ');
+  var method = null, path;
+  if (parts.length >= 2) { method = parts[0].toUpperCase(); path = parts.slice(1).join(' '); }
+  else { path = parts[0]; }
+
+  /* Escape regex special chars in path, then replace \* with [^/]+ */
+  var escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '[^/]+');
+  var re = new RegExp('^' + escaped + '$');
+  return { method: method, regex: re, original: pattern };
+}
+
+function showEndpointCount() {
+  $.getJSON('/api/patterns', function(patterns) {
+    var matchers = patterns.map(patternToRegex);
+    var counts = {};     /* pattern -> count */
+    var successCounts = {}; /* pattern -> 2xx count */
+    var failCounts = {};    /* pattern -> 4xx/5xx count */
+    var unmatchedRows = [];
+
+    patterns.forEach(function(p) { counts[p] = 0; successCounts[p] = 0; failCounts[p] = 0; });
+
+    tableItems.forEach(function(row) {
+      var rowMethod = (row.api_request.method || '').toUpperCase();
+      var rowUrl = row.url || '';
+      var status = parseInt(row.http_status || row.api_response.status);
+      var matched = false;
+
+      for (var i = 0; i < matchers.length; i++) {
+        var m = matchers[i];
+        if (m.method && m.method !== rowMethod) continue;
+        if (m.regex.test(rowUrl)) {
+          counts[m.original]++;
+          if (status >= 200 && status < 300) successCounts[m.original]++;
+          else failCounts[m.original]++;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) unmatchedRows.push(row);
+    });
+
+    var html = '<p class="mb-2"><strong>' + tableItems.length + '</strong> total request(s) matched against <strong>' + patterns.length + '</strong> configured pattern(s):</p>';
+    html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
+    html += '<thead class="thead-light"><tr><th>Pattern</th><th style="text-align:center; width:80px;">Total</th><th style="text-align:center; width:80px;">Success</th><th style="text-align:center; width:80px;">Failed</th></tr></thead><tbody>';
+
+    patterns.forEach(function(p) {
+      var total = counts[p];
+      var rowClass = total === 0 ? ' class="text-muted"' : '';
+      var sPct = total ? ((successCounts[p] / total) * 100).toFixed(0) : '0';
+      var fPct = total ? ((failCounts[p] / total) * 100).toFixed(0) : '0';
+      html += '<tr' + rowClass + '>';
+      html += '<td><code style="font-size:12px;">' + p + '</code></td>';
+      html += '<td style="text-align:center;"><strong>' + total + '</strong></td>';
+      html += '<td style="text-align:center;">' + (successCounts[p] ? '<span class="text-success">' + successCounts[p] + '</span> <span class="text-muted" style="font-size:80%;">' + sPct + '%</span>' : '<span class="text-muted">0</span>') + '</td>';
+      html += '<td style="text-align:center;">' + (failCounts[p] ? '<span class="text-danger">' + failCounts[p] + '</span> <span class="text-muted" style="font-size:80%;">' + fPct + '%</span>' : '<span class="text-muted">0</span>') + '</td>';
+      html += '</tr>';
+    });
+
+    if (unmatchedRows.length) {
+      html += '<tr class="table-warning" id="unmatchedRow" style="cursor:pointer;"><td><em>(unmatched)</em></td>';
+      html += '<td style="text-align:center;"><strong>' + unmatchedRows.length + '</strong></td>';
+      html += '<td style="text-align:center;" colspan="2"></td></tr>';
+    }
+
+    html += '</tbody></table>';
+    html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Patterns are configured in <code>server.js</code> &rarr; <code>API_PATTERNS</code> array.' +
+      (unmatchedRows.length ? ' Click <em>(unmatched)</em> to view those records.' : '') + '</p>';
+
+    $('#endpointCountContent').html(html);
+
+    if (unmatchedRows.length) {
+      $('#unmatchedRow').on('click', function() {
+        openFilteredWindow(unmatchedRows, 'Unmatched API Requests');
+      });
+    }
+
+    $('#endpointCountModal').modal('show');
+  }).fail(function() {
+    $('#endpointCountContent').html('<div class="alert alert-danger mb-0">Failed to load patterns from server.</div>');
+    $('#endpointCountModal').modal('show');
+  });
+}
+
+/* ── Client IDs ── */
+function showClientIds() {
+  var clientMap = {};  /* client_id -> { total, success, fail, records } */
+
+  tableItems.forEach(function(row) {
+    var cid = row.client_id || '(unknown)';
+    if (!clientMap[cid]) clientMap[cid] = { total: 0, success: 0, fail: 0, records: [] };
+    clientMap[cid].total++;
+    clientMap[cid].records.push(row);
+    var status = parseInt(row.http_status || row.api_response.status);
+    if (status >= 200 && status < 300) clientMap[cid].success++;
+    else clientMap[cid].fail++;
+  });
+
+  var cids = Object.keys(clientMap).sort(function(a, b) {
+    return clientMap[b].total - clientMap[a].total;
+  });
+
+  var html = '<p class="mb-2"><strong>' + cids.length + '</strong> distinct client ID(s) across <strong>' + tableItems.length + '</strong> request(s):</p>';
+  html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
+  html += '<thead class="thead-light"><tr><th>Client ID</th><th style="text-align:center; width:70px;">Total</th><th style="text-align:center; width:90px;">Success</th><th style="text-align:center; width:90px;">Failed</th></tr></thead><tbody>';
+
+  cids.forEach(function(cid) {
+    var c = clientMap[cid];
+    var sPct = c.total ? ((c.success / c.total) * 100).toFixed(0) : '0';
+    var fPct = c.total ? ((c.fail / c.total) * 100).toFixed(0) : '0';
+    html += '<tr class="clientid-row" style="cursor:pointer;" data-cid="' + cid.replace(/"/g, '&quot;') + '">';
+    html += '<td><code style="font-size:11px; word-break:break-all;">' + cid + '</code></td>';
+    html += '<td style="text-align:center;"><strong>' + c.total + '</strong></td>';
+    html += '<td style="text-align:center;">' + (c.success ? '<span class="text-success">' + c.success + '</span> <span class="text-muted" style="font-size:80%;">' + sPct + '%</span>' : '<span class="text-muted">0</span>') + '</td>';
+    html += '<td style="text-align:center;">' + (c.fail ? '<span class="text-danger">' + c.fail + '</span> <span class="text-muted" style="font-size:80%;">' + fPct + '%</span>' : '<span class="text-muted">0</span>') + '</td>';
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a row to view its records in a new window.</p>';
+
+  $('#clientIdsContent').html(html);
+
+  $('#clientIdsContent .clientid-row').on('click', function() {
+    var cid = $(this).data('cid');
+    var records = clientMap[cid] ? clientMap[cid].records : [];
+    var label = cid.length > 30 ? cid.slice(0, 10) + '...' + cid.slice(-10) : cid;
+    openFilteredWindow(records, 'Client ID: ' + label);
+  });
+
+  $('#clientIdsModal').modal('show');
+}
+
 /* ── Load data from file picker ── */
 function loadAndRender(allData) {
   if (!allData || !allData.length) {
@@ -738,12 +1069,17 @@ function loadAndRender(allData) {
   }
   $('#file-picker').hide();
   $('#file-error').hide();
-  document.title = allData.length + ' events - REST API History';
+  $('#tools-bar').show();
+  document.title = allData.length + ' events - Local REST API Explorer';
   allData.sort(function(a, b) { return new Date(b.create_time).getTime() - new Date(a.create_time).getTime(); });
   renderTable(allData);
 }
 
 $(document).ready(function() {
+  $('#btnErrorAnalysis').on('click', showErrorAnalysis);
+  $('#btnEndpointCount').on('click', showEndpointCount);
+  $('#btnClientIds').on('click', showClientIds);
+
   $('#dataFileInput').on('change', function(e) {
     var files = e.target.files;
     if (!files.length) return;
