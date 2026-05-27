@@ -128,6 +128,30 @@ Lists all distinct `client_id` values found in the loaded data:
 - Sorted by total count descending.
 - Click any row to open a **new window** showing that client's records.
 
+## Bookmarklet: Load More + Export
+
+`loadmore-bookmarklet.js` is a bookmarklet for the **live** `apihistory.paypal.com` site. It adds two buttons to the search results page:
+
+- **Load More** -- fetches the next page of older records via AJAX and appends them to the current table. Click repeatedly to accumulate all pages without full-page reloads.
+- **Export JSON** -- downloads all currently loaded records as a `.txt` file, which can then be opened in the Local REST API Explorer.
+
+### Setup
+
+1. Open `loadmore-bookmarklet-min.txt` and copy the entire contents (starts with `javascript:`)
+2. Create a new bookmark in your browser
+3. Paste the copied text as the bookmark **URL**
+4. Name it something like "API History Load More"
+
+### Usage
+
+1. Navigate to `apihistory.paypal.com` and run a search
+2. Click the bookmark -- a green **Load More** button and a blue **Export JSON** button appear in the summary bar
+3. Click **Load More** to fetch and append older records (button shows running total)
+4. When no more records exist, the button greys out
+5. Click **Export JSON** to save all loaded records as a `.txt` file for offline analysis
+
+> The bookmarklet only works on the live PayPal domain (same-origin AJAX + session cookies). It cannot work from a locally saved HTML file.
+
 ## Configuration
 
 | Item | File | Description |
