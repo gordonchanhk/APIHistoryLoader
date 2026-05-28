@@ -96,6 +96,28 @@ a:hover { color: currentColor; }
 #expandAllContainer .btn-outline-light { color: #ddd; }
 
 #summary-bar { margin: 12px 0; text-align: center; }
+
+/* Exclude filter */
+#exclude-section { display: inline-block; vertical-align: middle; margin-left: 18px; }
+#exclude-input { width: 180px; height: 28px; font-size: 85%; padding: 2px 6px; display: inline-block; vertical-align: middle; }
+#exclude-add-btn { height: 28px; padding: 2px 8px; font-size: 85%; vertical-align: middle; margin-left: 4px; }
+#exclude-pills { margin-top: 4px; min-height: 0; }
+#exclude-pills:empty { display: none; }
+.exclude-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  background-color: #e9ecef; border: 1px solid #ced4da; border-radius: 12px;
+  padding: 1px 8px 1px 4px; margin: 2px 4px 2px 0; font-size: 84%; color: #333;
+  white-space: nowrap;
+}
+.exclude-pill.inactive { opacity: 0.5; background-color: #f8f9fa; text-decoration: line-through; }
+.exclude-pill input[type="checkbox"] { margin: 0 2px 0 0; cursor: pointer; }
+.exclude-pill-remove {
+  cursor: pointer; color: #999; font-weight: bold; font-size: 110%;
+  margin-left: 2px; line-height: 1; padding: 0 2px;
+}
+.exclude-pill-remove:hover { color: #c00; }
+#exclude-clear-all { font-size: 84%; margin-left: 6px; cursor: pointer; color: #007bff; }
+#exclude-clear-all:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -130,6 +152,12 @@ a:hover { color: currentColor; }
     <button type="button" class="btn btn-sm btn-outline-danger" id="btnErrorAnalysis"><span class="fa fa-exclamation-triangle"></span> Error Analysis</button>
     <button type="button" class="btn btn-sm btn-outline-primary" id="btnEndpointCount"><span class="fa fa-bar-chart"></span> Endpoint Count</button>
     <button type="button" class="btn btn-sm btn-outline-info" id="btnClientIds"><span class="fa fa-id-card-o"></span> Client IDs</button>
+    <span id="exclude-section">
+      <span class="text-muted" style="font-size:90%; margin-right:2px;">Exclude:</span>
+      <input type="text" id="exclude-input" class="form-control form-control-sm d-inline-block" placeholder="path or keyword">
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="exclude-add-btn">+ Add</button>
+    </span>
+    <div id="exclude-pills"></div>
   </blockquote>
   <div id="frmSearchResults"></div>
 </div>
@@ -227,8 +255,78 @@ var spansDays = false;
 var ianaTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Los_Angeles';
 moment.tz.setDefault(ianaTimezone);
 
+var allLoadedData = [];
+var excludePatterns = [];
+
 var EXPAND_ALL_LABEL = '<span class="fa fa-plus"></span> all';
 var COLLAPSE_ALL_LABEL = '<span class="fa fa-minus"></span>';
+
+/* ── Exclude filter functions ── */
+function getFilteredData() {
+  var activePatterns = excludePatterns.filter(function(p) { return p.active; });
+  if (!activePatterns.length) return allLoadedData.slice();
+  return allLoadedData.filter(function(row) {
+    var str = JSON.stringify(row);
+    for (var i = 0; i < activePatterns.length; i++) {
+      if (str.indexOf(activePatterns[i].text) !== -1) return false;
+    }
+    return true;
+  });
+}
+
+function applyExclusions() {
+  var $table = $('#tableResults');
+  if ($table.length) {
+    try { $table.bootstrapTable('destroy'); } catch(e) {}
+  }
+  renderTable(getFilteredData());
+}
+
+function addExcludePattern(text) {
+  text = (text || '').trim();
+  if (!text) return;
+  /* Avoid duplicates */
+  for (var i = 0; i < excludePatterns.length; i++) {
+    if (excludePatterns[i].text === text) return;
+  }
+  excludePatterns.push({ text: text, active: true });
+  renderExcludePills();
+  applyExclusions();
+}
+
+function removeExcludePattern(index) {
+  excludePatterns.splice(index, 1);
+  renderExcludePills();
+  applyExclusions();
+}
+
+function toggleExcludePattern(index) {
+  excludePatterns[index].active = !excludePatterns[index].active;
+  renderExcludePills();
+  applyExclusions();
+}
+
+function renderExcludePills() {
+  var html = '';
+  excludePatterns.forEach(function(p, i) {
+    var cls = 'exclude-pill' + (p.active ? '' : ' inactive');
+    html += '<span class="' + cls + '">';
+    html += '<input type="checkbox" class="exclude-pill-check" data-index="' + i + '"' + (p.active ? ' checked' : '') + '>';
+    html += '<span>' + $('<span>').text(p.text).html() + '</span>';
+    html += '<span class="exclude-pill-remove" data-index="' + i + '">&times;</span>';
+    html += '</span>';
+  });
+  if (excludePatterns.length) {
+    html += '<span id="exclude-clear-all">Clear All</span>';
+  }
+  $('#exclude-pills').html(html);
+}
+
+function clearAllExclusions() {
+  excludePatterns = [];
+  renderExcludePills();
+  applyExclusions();
+}
 
 /* ── Formatting functions ── */
 
@@ -656,14 +754,16 @@ function renderTable(items) {
   spansDays = (days > 1);
 
   var summary = '';
+  var excludedCount = allLoadedData.length - items.length;
   if (items.length === 1) summary = '1 event';
   else {
-    summary = items.length + ' events spanning ';
+    summary = (excludedCount > 0 ? items.length + ' of ' + allLoadedData.length + ' events' : items.length + ' events') + ' spanning ';
     if (days) summary += days + ' days';
     else if (hours) summary += hours + ' hours';
     else if (mins) summary += mins + ' minutes';
     else summary += secs + ' seconds';
   }
+  if (excludedCount > 0) summary += ' (' + excludedCount + ' excluded)';
   $('#summary-bar').html('<div class="alert alert-info" style="border-color:lightgrey; text-align:center; max-width:510px; margin:0 auto; margin-bottom:0;">' + summary + '</div>');
 
   /* Toolbar HTML */
@@ -1070,15 +1170,37 @@ function loadAndRender(allData) {
   $('#file-picker').hide();
   $('#file-error').hide();
   $('#tools-bar').show();
-  document.title = allData.length + ' events - Local REST API Explorer';
   allData.sort(function(a, b) { return new Date(b.create_time).getTime() - new Date(a.create_time).getTime(); });
-  renderTable(allData);
+  allLoadedData = allData;
+  document.title = allLoadedData.length + ' events - Local REST API Explorer';
+  applyExclusions();
 }
 
 $(document).ready(function() {
   $('#btnErrorAnalysis').on('click', showErrorAnalysis);
   $('#btnEndpointCount').on('click', showEndpointCount);
   $('#btnClientIds').on('click', showClientIds);
+
+  /* Exclude filter events */
+  $('#exclude-add-btn').on('click', function() {
+    addExcludePattern($('#exclude-input').val());
+    $('#exclude-input').val('');
+  });
+  $('#exclude-input').on('keydown', function(e) {
+    if (e.key === 'Enter') {
+      addExcludePattern($(this).val());
+      $(this).val('');
+    }
+  });
+  $(document).on('click', '.exclude-pill-remove', function() {
+    removeExcludePattern(parseInt($(this).data('index')));
+  });
+  $(document).on('change', '.exclude-pill-check', function() {
+    toggleExcludePattern(parseInt($(this).data('index')));
+  });
+  $(document).on('click', '#exclude-clear-all', function() {
+    clearAllExclusions();
+  });
 
   $('#dataFileInput').on('change', function(e) {
     var files = e.target.files;
