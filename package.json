@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "bm": "npx terser loadmore-bookmarklet.js --compress --mangle --output /dev/stdout | tr -d '\\n' | sed 's/%/%25/g' | sed 's/^/javascript:/' > loadmore-bookmarklet-min.txt && echo \"Done: loadmore-bookmarklet-min.txt ($(wc -c < loadmore-bookmarklet-min.txt) bytes)\""
   },
   "dependencies": {
     "express": "^4.18.0",

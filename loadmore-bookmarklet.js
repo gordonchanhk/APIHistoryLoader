@@ -164,7 +164,10 @@
     stopBtn.innerHTML = '<span class="fa fa-pause"></span> Stopping...';
   });
 
+  var pageCount = 0;
+
   function fetchNextPage() {
+    pageCount++;
     var earliestTime = getEarliestTime();
     var earliestMoment = moment.utc(earliestTime).tz(ianaTimezone);
 
@@ -226,6 +229,14 @@
             return;
           }
 
+          /* Every 10 pages, ask to continue */
+          if (pageCount > 0 && pageCount % 10 === 0) {
+            if (!confirm('Loaded ' + pageCount + ' pages (' + tableItems.length + ' records so far). Continue?')) {
+              finishLoading('<span class="fa fa-download"></span> Load More (' + tableItems.length + ' loaded)');
+              return;
+            }
+          }
+
           /* Continue to next page */
           fetchNextPage();
 
@@ -251,6 +262,7 @@
     if (isLoading) return;
     isLoading = true;
     stopRequested = false;
+    pageCount = 0;
     btn.disabled = true;
     stopBtn.style.display = 'inline-block';
     fetchNextPage();
