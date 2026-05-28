@@ -152,6 +152,8 @@ a:hover { color: currentColor; }
     <button type="button" class="btn btn-sm btn-outline-danger" id="btnErrorAnalysis"><span class="fa fa-exclamation-triangle"></span> Error Analysis</button>
     <button type="button" class="btn btn-sm btn-outline-primary" id="btnEndpointCount"><span class="fa fa-bar-chart"></span> Endpoint Count</button>
     <button type="button" class="btn btn-sm btn-outline-info" id="btnClientIds"><span class="fa fa-id-card-o"></span> Client IDs</button>
+    <button type="button" class="btn btn-sm btn-outline-success" id="btnCaptureAnalysis"><span class="fa fa-credit-card"></span> Capture Analysis</button>
+    <button type="button" class="btn btn-sm btn-outline-warning" id="btnDropOff"><span class="fa fa-sign-out"></span> Drop-off</button>
     <span id="exclude-section">
       <span class="text-muted" style="font-size:90%; margin-right:2px;">Exclude:</span>
       <input type="text" id="exclude-input" class="form-control form-control-sm d-inline-block" placeholder="path or keyword">
@@ -190,7 +192,7 @@ a:hover { color: currentColor; }
   <div class="modal-dialog" style="max-width:700px !important; top:40px;">
     <div class="modal-content">
       <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
-        <h5 class="modal-title" style="margin:0;"><span class="fa fa-exclamation-triangle text-danger"></span> Error Analysis (422 Responses)</h5>
+        <h5 class="modal-title" style="margin:0;"><span class="fa fa-exclamation-triangle text-danger"></span> Error Analysis</h5>
         <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
       </div>
       <div class="modal-body" style="padding:15px; max-height:calc(100vh - 200px); background-color:#fff;">
@@ -231,6 +233,42 @@ a:hover { color: currentColor; }
       </div>
       <div class="modal-body" style="padding:15px; max-height:calc(100vh - 200px); background-color:#fff;">
         <div id="clientIdsContent"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Drop-off Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="dropOffModal">
+  <div class="modal-dialog" style="max-width:700px !important; top:40px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" style="margin:0;"><span class="fa fa-sign-out" style="color:#e6a800;"></span> Order Drop-off</h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 200px); background-color:#fff;">
+        <div id="dropOffContent"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Capture Analysis Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="captureAnalysisModal">
+  <div class="modal-dialog" style="max-width:800px !important; top:40px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" style="margin:0;"><span class="fa fa-credit-card text-success"></span> Capture Analysis</h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 200px); background-color:#fff;">
+        <div id="captureAnalysisContent"></div>
       </div>
       <div class="modal-footer" style="padding:6px 10px;">
         <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
@@ -782,7 +820,7 @@ function renderTable(items) {
     'data-detail-view-by-click="false" data-detail-view-icon="true" ' +
     'data-buttons-class="outline-secondary" data-pagination-v-align="top" ' +
     'data-toolbar="#tabletoolbar" data-toolbar-align="right" ' +
-    'data-page-size="100" data-page-list="[10, 15, 20, 50, 100, All]" ' +
+    'data-page-size="100" data-page-list="[10, 15, 20, 50, 100]" ' +
     'data-search="true" data-custom-search="customTableSearch" ' +
     'data-show-search-clear-button="true" ' +
     'data-hover="true" data-striped="true" data-sort-name="create_time" data-sort-order="desc">' +
@@ -947,14 +985,24 @@ function openFilteredWindow(records, title) {
 function showErrorAnalysis() {
   var errors = tableItems.filter(function(r) {
     var s = parseInt(r.http_status || r.api_response.status);
-    return s === 422;
+    return s >= 400;
   });
 
   if (!errors.length) {
-    $('#errorAnalysisContent').html('<div class="alert alert-success mb-0">No 422 errors found in the loaded data.</div>');
+    $('#errorAnalysisContent').html('<div class="alert alert-success mb-0">No error responses found in the loaded data.</div>');
     $('#errorAnalysisModal').modal('show');
     return;
   }
+
+  /* Count by HTTP status code */
+  var statusCounts = {};
+  errors.forEach(function(r) {
+    var s = parseInt(r.http_status || r.api_response.status);
+    statusCounts[s] = (statusCounts[s] || 0) + 1;
+  });
+  var statusSummary = Object.keys(statusCounts).sort().map(function(s) {
+    return '<span class="text-danger font-weight-bold">' + s + '</span>&nbsp;(' + statusCounts[s] + ')';
+  }).join(', ');
 
   /* Count by issue */
   var issueCounts = {};
@@ -962,8 +1010,11 @@ function showErrorAnalysis() {
   errors.forEach(function(r) {
     var details = (r.api_response.body && r.api_response.body.details) || [];
     if (!details.length) {
-      var key = '(no details)';
+      var status = parseInt(r.http_status || r.api_response.status);
+      var name = (r.api_response.body && r.api_response.body.name) || '';
+      var key = name ? status + ' ' + name : status + ' (no details)';
       issueCounts[key] = (issueCounts[key] || 0) + 1;
+      if (r.api_response.body && r.api_response.body.message && !issueDesc[key]) issueDesc[key] = r.api_response.body.message;
     }
     details.forEach(function(d) {
       var issue = d.issue || '(unknown)';
@@ -980,7 +1031,7 @@ function showErrorAnalysis() {
   var totalIssues = 0;
   sorted.forEach(function(k) { totalIssues += issueCounts[k]; });
 
-  var html = '<p class="mb-2"><strong>' + errors.length + '</strong> request(s) returned <span class="text-danger font-weight-bold">422</span>, totalling <strong>' + totalIssues + '</strong> issue(s):</p>';
+  var html = '<p class="mb-2"><strong>' + errors.length + '</strong> request(s) returned errors: ' + statusSummary + '</p>';
   html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
   html += '<thead class="thead-light"><tr><th style="width:40%;">Issue</th><th style="width:50%;">Description</th><th style="width:10%; text-align:center;">Count</th></tr></thead><tbody>';
 
@@ -1019,7 +1070,7 @@ function showErrorAnalysis() {
   $('#errorAnalysisContent .issue-row').on('click', function() {
     var issue = $(this).data('issue');
     var records = issueRecords[issue] || [];
-    openFilteredWindow(records, '422 Error: ' + issue);
+    openFilteredWindow(records, 'Error: ' + issue);
   });
 
   $('#errorAnalysisModal').modal('show');
@@ -1076,10 +1127,10 @@ function showEndpointCount() {
 
     patterns.forEach(function(p) {
       var total = counts[p];
-      var rowClass = total === 0 ? ' class="text-muted"' : '';
+      if (total === 0) return;
       var sPct = total ? ((successCounts[p] / total) * 100).toFixed(0) : '0';
       var fPct = total ? ((failCounts[p] / total) * 100).toFixed(0) : '0';
-      html += '<tr' + rowClass + '>';
+      html += '<tr>';
       html += '<td><code style="font-size:12px;">' + p + '</code></td>';
       html += '<td style="text-align:center;"><strong>' + total + '</strong></td>';
       html += '<td style="text-align:center;">' + (successCounts[p] ? '<span class="text-success">' + successCounts[p] + '</span> <span class="text-muted" style="font-size:80%;">' + sPct + '%</span>' : '<span class="text-muted">0</span>') + '</td>';
@@ -1161,6 +1212,304 @@ function showClientIds() {
   $('#clientIdsModal').modal('show');
 }
 
+/* ── Capture Analysis ── */
+function showCaptureAnalysis() {
+  var createOrderRe = /^\/v2\/checkout\/orders$/;
+  var captureOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)\/capture$/;
+  var getOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)$/;
+
+  /* Build lookup: order ID → payment_source from GET /v2/checkout/orders/{id} records */
+  var orderPaymentSource = {};
+  tableItems.forEach(function(row) {
+    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
+    var url = row.url || '';
+    if (method !== 'GET' && method !== 'POST') return;
+    var m = url.match(getOrderRe);
+    if (!m) return;
+    var orderId = m[1];
+    if (orderPaymentSource[orderId]) return;
+    try {
+      var ps = row.api_response.body.payment_source;
+      if (ps) orderPaymentSource[orderId] = Object.keys(ps)[0];
+    } catch(e) {}
+  });
+
+  var records = [];
+
+  tableItems.forEach(function(row) {
+    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
+    if (method !== 'POST') return;
+
+    var url = row.url || '';
+    var isCreate = createOrderRe.test(url);
+    var captureMatch = url.match(captureOrderRe);
+    var isCapture = !!captureMatch;
+    if (!isCreate && !isCapture) return;
+
+    var httpStatus = parseInt(row.http_status || (row.api_response && row.api_response.status));
+    var body = (row.api_response && row.api_response.body) || {};
+
+    /* Try to get capture status */
+    var captureStatus = null;
+    try { captureStatus = body.purchase_units[0].payments.captures[0].status; } catch(e) {}
+
+    /* For order-create URLs, only include if captures data exists or if error */
+    if (isCreate && !captureStatus && httpStatus >= 200 && httpStatus < 400) return;
+
+    /* Get payment source type from response, fallback to request body */
+    var paymentSource = null;
+    try {
+      var ps = body.payment_source;
+      if (ps) paymentSource = Object.keys(ps)[0];
+    } catch(e) {}
+    if (!paymentSource) {
+      try {
+        var reqPs = row.api_request.body.payment_source;
+        if (reqPs) paymentSource = Object.keys(reqPs)[0];
+      } catch(e) {}
+    }
+    /* Fallback: look up payment source from related order record */
+    if (!paymentSource && isCapture && captureMatch[1]) {
+      paymentSource = orderPaymentSource[captureMatch[1]] || null;
+    }
+
+    /* Determine outcome */
+    var outcome;
+    if (httpStatus >= 400) outcome = 'failed';
+    else if (captureStatus === 'COMPLETED') outcome = 'completed';
+    else if (captureStatus === 'PENDING') outcome = 'pending';
+    else if (captureStatus === 'DECLINED') outcome = 'failed';
+    else return;
+
+    records.push({
+      row: row,
+      paymentSource: paymentSource || '(unknown)',
+      outcome: outcome,
+      type: isCreate ? 'create' : 'capture'
+    });
+  });
+
+  if (!records.length) {
+    $('#captureAnalysisContent').html('<div class="alert alert-success mb-0">No capture transactions found in the loaded data.</div>');
+    $('#captureAnalysisModal').modal('show');
+    return;
+  }
+
+  /* Group by payment source */
+  var sourceMap = {};
+  var totals = { completed: 0, pending: 0, failed: 0, total: 0 };
+
+  records.forEach(function(rec) {
+    var src = rec.paymentSource;
+    if (!sourceMap[src]) sourceMap[src] = { completed: 0, pending: 0, failed: 0, total: 0, completedRecords: [], pendingRecords: [], failedRecords: [] };
+    sourceMap[src][rec.outcome]++;
+    sourceMap[src].total++;
+    sourceMap[src][rec.outcome + 'Records'].push(rec.row);
+    totals[rec.outcome]++;
+    totals.total++;
+  });
+
+  /* Sort by total descending */
+  var sources = Object.keys(sourceMap).sort(function(a, b) {
+    return sourceMap[b].total - sourceMap[a].total;
+  });
+
+  /* Build HTML */
+  var html = '<p class="mb-2"><strong>' + records.length + '</strong> capture transaction(s) across <strong>' + sources.length + '</strong> payment source(s):</p>';
+  html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
+  html += '<thead class="thead-light"><tr>';
+  html += '<th>Payment Source</th>';
+  html += '<th style="text-align:center; width:90px;">Completed</th>';
+  html += '<th style="text-align:center; width:90px;">Pending</th>';
+  html += '<th style="text-align:center; width:90px;">Failed</th>';
+  html += '<th style="text-align:center; width:70px;">Total</th>';
+  html += '</tr></thead><tbody>';
+
+  function pct(count, total) {
+    if (!count || !total) return '';
+    return ' <span class="text-muted" style="font-size:80%;">' + ((count / total) * 100).toFixed(0) + '%</span>';
+  }
+
+  function drillCell(count, total, src, outcome, colorClass, colorStyle) {
+    if (!count) return '<span class="text-muted">0</span>';
+    var esc = src.replace(/"/g, '&quot;');
+    var style = 'text-decoration:none; cursor:pointer;' + (colorStyle ? ' color:' + colorStyle + ';' : '');
+    var cls = 'capture-drill font-weight-bold' + (colorClass ? ' ' + colorClass : '');
+    return '<a href="javascript:void(0);" class="' + cls + '" data-source="' + esc + '" data-outcome="' + outcome + '" style="' + style + '">' + count + '</a>' + pct(count, total);
+  }
+
+  sources.forEach(function(src) {
+    var s = sourceMap[src];
+    html += '<tr>';
+    html += '<td><code style="font-size:12px;">' + src + '</code></td>';
+    html += '<td style="text-align:center;">' + drillCell(s.completed, s.total, src, 'completed', 'text-success') + '</td>';
+    html += '<td style="text-align:center;">' + drillCell(s.pending, s.total, src, 'pending', '', '#e6a800') + '</td>';
+    html += '<td style="text-align:center;">' + drillCell(s.failed, s.total, src, 'failed', 'text-danger') + '</td>';
+    html += '<td style="text-align:center;"><strong>' + s.total + '</strong></td>';
+    html += '</tr>';
+  });
+
+  /* Totals row */
+  html += '<tr class="table-secondary font-weight-bold">';
+  html += '<td>Total</td>';
+  html += '<td style="text-align:center;" class="text-success">' + totals.completed + pct(totals.completed, totals.total) + '</td>';
+  html += '<td style="text-align:center; color:#e6a800;">' + totals.pending + pct(totals.pending, totals.total) + '</td>';
+  html += '<td style="text-align:center;" class="text-danger">' + totals.failed + pct(totals.failed, totals.total) + '</td>';
+  html += '<td style="text-align:center;">' + totals.total + '</td>';
+  html += '</tr>';
+
+  html += '</tbody></table>';
+  html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a count to view those records in a new window.</p>';
+
+  $('#captureAnalysisContent').html(html);
+
+  /* Drill-down click handler */
+  $('#captureAnalysisContent').on('click', '.capture-drill', function() {
+    var src = $(this).data('source');
+    var outcome = $(this).data('outcome');
+    var recs = sourceMap[src] ? sourceMap[src][outcome + 'Records'] : [];
+    if (!recs.length) return;
+    var labels = { completed: 'Completed', pending: 'Pending', failed: 'Failed' };
+    openFilteredWindow(recs, labels[outcome] + ' Captures: ' + src);
+  });
+
+  $('#captureAnalysisModal').modal('show');
+}
+
+/* ── Drop-off Analysis ── */
+function showDropOff() {
+  var captureOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)\/capture$/;
+
+  /* Build per-order capture outcome: best result wins (completed > pending > failed) */
+  /* orderOutcome[orderId] = { outcome: 'completed'|'pending'|'failed', records: [...] } */
+  var orderOutcome = {};
+
+  tableItems.forEach(function(row) {
+    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
+    if (method !== 'POST') return;
+    var url = row.url || '';
+
+    var orderId = null;
+    var captureStatus = null;
+    var httpStatus = parseInt(row.http_status || (row.api_response && row.api_response.status));
+
+    /* Explicit capture call */
+    var m = url.match(captureOrderRe);
+    if (m) {
+      orderId = m[1];
+      try { captureStatus = row.api_response.body.purchase_units[0].payments.captures[0].status; } catch(e) {}
+    }
+
+    /* Inline capture: POST /v2/checkout/orders with captures in response */
+    if (!orderId && url === '/v2/checkout/orders') {
+      try {
+        var cap = row.api_response.body.purchase_units[0].payments.captures[0];
+        if (cap) {
+          orderId = row.api_response.body.id;
+          captureStatus = cap.status;
+        }
+      } catch(e) {}
+    }
+
+    if (!orderId) return;
+
+    /* Determine outcome for this capture attempt */
+    var outcome;
+    if (httpStatus >= 400) outcome = 'failed';
+    else if (captureStatus === 'COMPLETED') outcome = 'completed';
+    else if (captureStatus === 'PENDING') outcome = 'pending';
+    else if (captureStatus === 'DECLINED') outcome = 'failed';
+    else return;
+
+    if (!orderOutcome[orderId]) orderOutcome[orderId] = { outcome: outcome, records: [row] };
+    else {
+      orderOutcome[orderId].records.push(row);
+      /* Upgrade outcome: completed > pending > failed */
+      var cur = orderOutcome[orderId].outcome;
+      if (outcome === 'completed' || (outcome === 'pending' && cur === 'failed')) {
+        orderOutcome[orderId].outcome = outcome;
+      }
+    }
+  });
+
+  /* Scan order creations and classify each */
+  var totalCreates = 0;
+  var buckets = {
+    completed: { count: 0, orders: [] },
+    pending:   { count: 0, orders: [] },
+    failed:    { count: 0, orders: [] },
+    none:      { count: 0, orders: [] }
+  };
+
+  tableItems.forEach(function(row) {
+    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
+    if (method !== 'POST') return;
+    if (row.url !== '/v2/checkout/orders') return;
+
+    var httpStatus = parseInt(row.http_status || (row.api_response && row.api_response.status));
+    if (httpStatus !== 201) return;
+
+    totalCreates++;
+
+    var orderId = null;
+    try { orderId = row.api_response.body.id; } catch(e) {}
+
+    if (orderId && orderOutcome[orderId]) {
+      var bucket = orderOutcome[orderId].outcome;
+      buckets[bucket].count++;
+      buckets[bucket].orders.push(row);
+    } else {
+      buckets.none.count++;
+      buckets.none.orders.push(row);
+    }
+  });
+
+  var html = '';
+  if (!totalCreates) {
+    html = '<div class="alert alert-success mb-0">No <code>POST /v2/checkout/orders</code> requests found in the loaded data.</div>';
+    $('#dropOffContent').html(html);
+    $('#dropOffModal').modal('show');
+    return;
+  }
+
+  function pct(n) { return ((n / totalCreates) * 100).toFixed(1); }
+  function drillLink(count, id, color) {
+    if (!count) return '<strong class="text-muted">0</strong>';
+    return '<a href="javascript:void(0);" class="dropoff-drill font-weight-bold" data-bucket="' + id + '" style="color:' + color + '; text-decoration:none;">' + count + '</a>';
+  }
+
+  html += '<p class="mb-3">Of <strong>' + totalCreates + '</strong> successful order creation(s) (<code>POST /v2/checkout/orders</code> &rarr; 201):</p>';
+  html += '<table class="table table-sm table-bordered mb-0" style="font-size:93%; max-width:500px;">';
+  html += '<tbody>';
+
+  html += '<tr><td><span class="fa fa-check text-success"></span> Capture completed</td>';
+  html += '<td style="text-align:center; width:130px;">' + drillLink(buckets.completed.count, 'completed', '#28a745') + ' <span class="text-muted" style="font-size:80%;">' + pct(buckets.completed.count) + '%</span></td></tr>';
+
+  html += '<tr><td><span class="fa fa-clock-o" style="color:#e6a800;"></span> Capture pending</td>';
+  html += '<td style="text-align:center; width:130px;">' + drillLink(buckets.pending.count, 'pending', '#e6a800') + ' <span class="text-muted" style="font-size:80%;">' + pct(buckets.pending.count) + '%</span></td></tr>';
+
+  html += '<tr><td><span class="fa fa-times text-danger"></span> Capture failed</td>';
+  html += '<td style="text-align:center; width:130px;">' + drillLink(buckets.failed.count, 'failed', '#dc3545') + ' <span class="text-muted" style="font-size:80%;">' + pct(buckets.failed.count) + '%</span></td></tr>';
+
+  html += '<tr><td><span class="fa fa-sign-out" style="color:#e6a800;"></span> No capture found</td>';
+  html += '<td style="text-align:center; width:130px;">' + drillLink(buckets.none.count, 'none', '#e6a800') + ' <span class="text-muted" style="font-size:80%;">' + pct(buckets.none.count) + '%</span></td></tr>';
+
+  html += '</tbody></table>';
+  html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a count to view those order creation records in a new window.</p>';
+
+  $('#dropOffContent').html(html);
+
+  $('#dropOffContent').on('click', '.dropoff-drill', function() {
+    var bucket = $(this).data('bucket');
+    var recs = buckets[bucket] ? buckets[bucket].orders : [];
+    if (!recs.length) return;
+    var labels = { completed: 'Capture Completed', pending: 'Capture Pending', failed: 'Capture Failed', none: 'No Capture Found' };
+    openFilteredWindow(recs, 'Orders: ' + labels[bucket]);
+  });
+
+  $('#dropOffModal').modal('show');
+}
+
 /* ── Load data from file picker ── */
 function loadAndRender(allData) {
   if (!allData || !allData.length) {
@@ -1171,6 +1520,20 @@ function loadAndRender(allData) {
   $('#file-error').hide();
   $('#tools-bar').show();
   allData.sort(function(a, b) { return new Date(b.create_time).getTime() - new Date(a.create_time).getTime(); });
+
+  /* Deduplicate by correlation_id */
+  var before = allData.length;
+  var seen = {};
+  allData = allData.filter(function(row) {
+    var cid = row.correlation_id;
+    if (!cid || cid === 'xxxxxx') return true;
+    if (seen[cid]) return false;
+    seen[cid] = true;
+    return true;
+  });
+  var dupes = before - allData.length;
+  if (dupes) console.log('Deduplicated: removed ' + dupes + ' duplicate(s) by correlation_id');
+
   allLoadedData = allData;
   document.title = allLoadedData.length + ' events - Local REST API Explorer';
   applyExclusions();
@@ -1180,6 +1543,8 @@ $(document).ready(function() {
   $('#btnErrorAnalysis').on('click', showErrorAnalysis);
   $('#btnEndpointCount').on('click', showEndpointCount);
   $('#btnClientIds').on('click', showClientIds);
+  $('#btnCaptureAnalysis').on('click', showCaptureAnalysis);
+  $('#btnDropOff').on('click', showDropOff);
 
   /* Exclude filter events */
   $('#exclude-add-btn').on('click', function() {

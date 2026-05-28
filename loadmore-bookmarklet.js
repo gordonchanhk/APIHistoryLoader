@@ -40,28 +40,37 @@
   btn.id = 'loadMoreBtn';
   btn.type = 'button';
   btn.className = 'btn btn-success btn-sm';
-  btn.style.cssText = 'margin-left:8px; margin-top:-3px; font-weight:bold;';
+  btn.style.cssText = 'font-weight:bold;';
   btn.innerHTML = '<span class="fa fa-download"></span> Load More';
 
-  /* Insert next to the back button / inside the header message bar */
+  /* Insert in a right-side container alongside the header message bar */
   var headerMsg = document.getElementById('headerMsg');
+  var rightContainer = document.createElement('div');
+  rightContainer.id = 'loadMoreContainer';
+  rightContainer.style.cssText = 'white-space:nowrap;';
+
   if (headerMsg) {
-    headerMsg.appendChild(btn);
+    var headerParent = headerMsg.parentElement;
+    headerParent.style.display = 'flex';
+    headerParent.style.alignItems = 'center';
+    headerParent.style.justifyContent = 'space-between';
+    headerParent.appendChild(rightContainer);
   } else {
     /* Fallback: insert above the table */
     var fc = document.getElementById('form-container');
-    if (fc) fc.after(btn);
+    if (fc) fc.after(rightContainer);
   }
+  rightContainer.appendChild(btn);
 
   /* ---- Also add an "Export All" button to download tableItems as JSON ---- */
   var exportBtn = document.createElement('button');
   exportBtn.id = 'exportAllBtn';
   exportBtn.type = 'button';
   exportBtn.className = 'btn btn-outline-info btn-sm';
-  exportBtn.style.cssText = 'margin-left:8px; margin-top:-3px;';
+  exportBtn.style.cssText = 'margin-left:8px;';
   exportBtn.innerHTML = '<span class="fa fa-save"></span> Export JSON';
   exportBtn.title = 'Download all loaded records as a .txt file (for use in Local REST API Explorer)';
-  if (headerMsg) headerMsg.appendChild(exportBtn);
+  rightContainer.appendChild(exportBtn);
 
   exportBtn.addEventListener('click', function () {
     var blob = new Blob([JSON.stringify(tableItems, null, 2)], { type: 'application/json' });
@@ -134,6 +143,7 @@
     /* Destroy and re-render the table */
     $('#tableResults').bootstrapTable('destroy');
     renderTable(tableItems);
+    hideAllOption();
 
     /* Update back button href */
     var earliest = tableItems[tableItems.length - 1].create_time;
@@ -154,7 +164,7 @@
   stopBtn.id = 'stopLoadBtn';
   stopBtn.type = 'button';
   stopBtn.className = 'btn btn-warning btn-sm';
-  stopBtn.style.cssText = 'margin-left:4px; margin-top:-3px; display:none;';
+  stopBtn.style.cssText = 'margin-left:4px; display:none;';
   stopBtn.innerHTML = '<span class="fa fa-stop"></span> Stop';
   btn.after(stopBtn);
 
@@ -268,5 +278,29 @@
     fetchNextPage();
   });
 
+  /* ---- Hide "All" from page-size dropdown ---- */
+  function hideAllOption() {
+    var $allLink = null;
+    $('.page-list .dropdown-item, .page-list .dropdown-menu a').each(function() {
+      if ($(this).text().trim().toLowerCase() === 'all') {
+        $(this).hide();
+        $allLink = $allLink || $(this);
+      }
+    });
+    /* If "All" is currently selected, switch to 50 */
+    var $toggle = $('.page-list button.dropdown-toggle, .page-list .btn.dropdown-toggle');
+    if ($toggle.length && $toggle.text().trim().toLowerCase() === 'all') {
+      $('.page-list .dropdown-item, .page-list .dropdown-menu a').each(function() {
+        if ($(this).text().trim() === '50') {
+          $(this).trigger('click');
+          return false;
+        }
+      });
+      /* Re-hide after the click may have re-rendered */
+      setTimeout(hideAllOption, 50);
+    }
+  }
+
   updateLabel();
+  hideAllOption();
 })();
