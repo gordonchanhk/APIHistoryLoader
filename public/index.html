@@ -97,6 +97,12 @@ a:hover { color: currentColor; }
 
 #summary-bar { margin: 12px 0; text-align: center; }
 
+.fixed-table-pagination {
+  position: sticky; top: 0; z-index: 10;
+  background-color: #fff; padding: 4px 0;
+  box-shadow: 0 4px 8px -2px rgba(0,0,0,0.15);
+}
+
 /* Exclude filter */
 #exclude-section { display: inline-block; vertical-align: middle; margin-left: 18px; }
 #exclude-input { width: 180px; height: 28px; font-size: 85%; padding: 2px 6px; display: inline-block; vertical-align: middle; }
@@ -118,6 +124,11 @@ a:hover { color: currentColor; }
 .exclude-pill-remove:hover { color: #c00; }
 #exclude-clear-all { font-size: 84%; margin-left: 6px; cursor: pointer; color: #007bff; }
 #exclude-clear-all:hover { text-decoration: underline; }
+
+tr.pie-highlight {
+  background-color: rgba(0, 123, 255, 0.12) !important;
+  transition: background-color 0.15s ease;
+}
 </style>
 </head>
 <body>
@@ -154,11 +165,13 @@ a:hover { color: currentColor; }
     <button type="button" class="btn btn-sm btn-outline-info" id="btnClientIds"><span class="fa fa-id-card-o"></span> Client IDs</button>
     <button type="button" class="btn btn-sm btn-outline-success" id="btnCaptureAnalysis"><span class="fa fa-credit-card"></span> Capture Analysis</button>
     <button type="button" class="btn btn-sm btn-outline-warning" id="btnDropOff"><span class="fa fa-sign-out"></span> Drop-off</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="btnExternalUrls"><span class="fa fa-external-link"></span> External URLs</button>
     <span id="exclude-section">
       <span class="text-muted" style="font-size:90%; margin-right:2px;">Exclude:</span>
       <input type="text" id="exclude-input" class="form-control form-control-sm d-inline-block" placeholder="path or keyword">
       <button type="button" class="btn btn-sm btn-outline-secondary" id="exclude-add-btn">+ Add</button>
     </span>
+    <span id="env-badge" style="margin-left:18px; font-size:85%; display:none;"></span>
     <div id="exclude-pills"></div>
   </blockquote>
   <div id="frmSearchResults"></div>
@@ -189,7 +202,7 @@ a:hover { color: currentColor; }
 
 <!-- Error Analysis Modal -->
 <div class="modal fade" tabindex="-1" role="dialog" id="errorAnalysisModal">
-  <div class="modal-dialog" style="max-width:700px !important; top:40px;">
+  <div class="modal-dialog" style="max-width:950px !important; top:40px;">
     <div class="modal-content">
       <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
         <h5 class="modal-title" style="margin:0;"><span class="fa fa-exclamation-triangle text-danger"></span> Error Analysis</h5>
@@ -207,7 +220,7 @@ a:hover { color: currentColor; }
 
 <!-- Endpoint Count Modal -->
 <div class="modal fade" tabindex="-1" role="dialog" id="endpointCountModal">
-  <div class="modal-dialog" style="max-width:750px !important; top:40px;">
+  <div class="modal-dialog" style="max-width:1000px !important; top:40px;">
     <div class="modal-content">
       <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
         <h5 class="modal-title" style="margin:0;"><span class="fa fa-bar-chart text-primary"></span> API Endpoint Count</h5>
@@ -225,7 +238,7 @@ a:hover { color: currentColor; }
 
 <!-- Client IDs Modal -->
 <div class="modal fade" tabindex="-1" role="dialog" id="clientIdsModal">
-  <div class="modal-dialog" style="max-width:800px !important; top:40px;">
+  <div class="modal-dialog" style="max-width:1050px !important; top:40px;">
     <div class="modal-content">
       <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
         <h5 class="modal-title" style="margin:0;"><span class="fa fa-id-card-o text-info"></span> Client IDs</h5>
@@ -243,7 +256,7 @@ a:hover { color: currentColor; }
 
 <!-- Drop-off Modal -->
 <div class="modal fade" tabindex="-1" role="dialog" id="dropOffModal">
-  <div class="modal-dialog" style="max-width:700px !important; top:40px;">
+  <div class="modal-dialog" style="max-width:950px !important; top:40px;">
     <div class="modal-content">
       <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
         <h5 class="modal-title" style="margin:0;"><span class="fa fa-sign-out" style="color:#e6a800;"></span> Order Drop-off</h5>
@@ -261,7 +274,7 @@ a:hover { color: currentColor; }
 
 <!-- Capture Analysis Modal -->
 <div class="modal fade" tabindex="-1" role="dialog" id="captureAnalysisModal">
-  <div class="modal-dialog" style="max-width:800px !important; top:40px;">
+  <div class="modal-dialog" style="max-width:1050px !important; top:40px;">
     <div class="modal-content">
       <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
         <h5 class="modal-title" style="margin:0;"><span class="fa fa-credit-card text-success"></span> Capture Analysis</h5>
@@ -277,6 +290,24 @@ a:hover { color: currentColor; }
   </div>
 </div>
 
+<!-- External URLs Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="externalUrlsModal">
+  <div class="modal-dialog" style="max-width:1050px !important; top:40px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" style="margin:0;"><span class="fa fa-external-link" style="color:#6c757d;"></span> External URLs</h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 200px); background-color:#fff;">
+        <div id="externalUrlsContent"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/moment-timezone@0.5.43/builds/moment-timezone-with-data.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.4/dist/jquery.min.js"></script>
@@ -284,6 +315,7 @@ a:hover { color: currentColor; }
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap-table@1.22.1/dist/bootstrap-table.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 
 <script>
 /* ── Globals ── */
@@ -291,6 +323,7 @@ var tableItems = [];
 var rawData, fmtData;
 var spansDays = false;
 var ianaTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Los_Angeles';
+var apiHistoryEnv = 'live';
 moment.tz.setDefault(ianaTimezone);
 
 var allLoadedData = [];
@@ -298,6 +331,13 @@ var excludePatterns = [];
 
 var EXPAND_ALL_LABEL = '<span class="fa fa-plus"></span> all';
 var COLLAPSE_ALL_LABEL = '<span class="fa fa-minus"></span>';
+
+var PIE_COLORS = [
+  '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f',
+  '#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac',
+  '#86bcb6','#d37295'
+];
+var _pieCharts = {};
 
 /* ── Exclude filter functions ── */
 function getFilteredData() {
@@ -929,9 +969,88 @@ function updateHttpFilters(curval) {
 }
 
 /* ── Open filtered records in a new window ── */
+function getApiHistoryUrl() {
+  if (apiHistoryEnv === 'sandbox') return 'https://internal.sandbox.paypalinc.com/apihistorynodeweb/search';
+  return 'https://apihistory.paypal.com/apihistorynodeweb/search';
+}
+
+/* ── Shared Pie Chart renderer ── */
+function renderPieChart(opts) {
+  var canvasId = opts.canvasId;
+  var $container = opts.$container;
+  var slices = opts.slices;
+
+  /* Destroy prior instance */
+  if (_pieCharts[canvasId]) {
+    _pieCharts[canvasId].destroy();
+    delete _pieCharts[canvasId];
+  }
+
+  var canvas = document.getElementById(canvasId);
+  if (!canvas || !slices.length) return;
+
+  var labels = slices.map(function(s) { return s.label; });
+  var data = slices.map(function(s) { return s.value; });
+  var colors = slices.map(function(s) { return s.color; });
+  var total = data.reduce(function(a, b) { return a + b; }, 0);
+
+  var chart = new Chart(canvas, {
+    type: 'pie',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: data,
+        backgroundColor: colors,
+        borderWidth: 1,
+        borderColor: '#fff',
+        hoverOffset: 12
+      }]
+    },
+    options: {
+      responsive: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              var v = ctx.parsed;
+              var pct = total ? ((v / total) * 100).toFixed(1) : 0;
+              return ctx.label + ': ' + v + ' (' + pct + '%)';
+            }
+          }
+        }
+      },
+      onHover: function(event, elements) {
+        /* Clear all highlights */
+        $container.find('tr.pie-highlight').removeClass('pie-highlight');
+        if (elements.length) {
+          var idx = elements[0].index;
+          $container.find('tr[data-slice-index="' + idx + '"]').addClass('pie-highlight');
+        }
+      }
+    }
+  });
+
+  _pieCharts[canvasId] = chart;
+
+  /* Table → Pie: mouseenter/mouseleave on data rows */
+  $container.find('tr[data-slice-index]').on('mouseenter', function() {
+    var idx = parseInt($(this).attr('data-slice-index'));
+    chart.setActiveElements([{ datasetIndex: 0, index: idx }]);
+    chart.tooltip.setActiveElements([{ datasetIndex: 0, index: idx }]);
+    chart.update('none');
+  }).on('mouseleave', function() {
+    chart.setActiveElements([]);
+    chart.tooltip.setActiveElements([]);
+    chart.update('none');
+  });
+}
+
 function openFilteredWindow(records, title) {
   var w = window.open('', '_blank');
   if (!w) { alert('Popup blocked. Please allow popups for this site.'); return; }
+
+  var lookupBase = getApiHistoryUrl();
 
   var rows = '';
   records.forEach(function(r) {
@@ -954,10 +1073,19 @@ function openFilteredWindow(records, title) {
     /* Escape HTML for safe embedding */
     function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+    var corrIdCell = '';
+    if (corrId && corrId !== 'xxxxxx') {
+      corrIdCell = '<code style="user-select:all;">' + esc(corrId) + '</code>' +
+        ' <span class="corr-copy" data-corrid="' + esc(corrId) + '" title="Copy" style="cursor:pointer; color:#888; font-size:16px; vertical-align:middle;">&#x2398;</span>' +
+        ' <a href="' + esc(lookupBase) + '?q=' + esc(corrId) + '" target="_blank" title="Look up in API History" style="color:#888; font-size:16px; vertical-align:middle; text-decoration:none;">&#x1F50D;</a>';
+    } else {
+      corrIdCell = '<code>' + esc(corrId) + '</code>';
+    }
+
     rows += '<tr>' +
       '<td style="white-space:nowrap;">' + esc(ts) + '</td>' +
       '<td style="word-break:break-all;">' + esc(r.url) + '</td>' +
-      '<td><code>' + esc(corrId) + '</code></td>' +
+      '<td style="white-space:nowrap;">' + corrIdCell + '</td>' +
       '<td>' + esc(method) + '</td>' +
       '<td style="color:' + statusColor + '; font-weight:bold;">' + status + '</td>' +
       '<td style="font-size:85%;">' + esc(issueList) + '</td>' +
@@ -971,11 +1099,13 @@ function openFilteredWindow(records, title) {
 
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + title.replace(/</g,'&lt;') + '</title>' +
     '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">' +
-    '<style>body{padding:20px;font-size:13px;} pre{white-space:pre-wrap;word-break:break-all;} tr.detail-row{background:#f8f9fa !important;} table{font-size:12px;}</style></head><body>' +
+    '<style>body{padding:20px;font-size:13px;} pre{white-space:pre-wrap;word-break:break-all;} tr.detail-row{background:#f8f9fa !important;} table{font-size:12px;} .corr-copy:hover{color:#007bff !important;} a[title="Look up in API History"]:hover{color:#007bff !important;}</style></head><body>' +
     '<h5>' + title.replace(/</g,'&lt;') + ' <span class="badge badge-secondary">' + records.length + ' record(s)</span></h5>' +
     '<table class="table table-sm table-bordered table-striped mt-3">' +
     '<thead class="thead-dark"><tr><th>Timestamp</th><th>URL</th><th>Corr ID</th><th>Method</th><th>Status</th><th>Issue(s)</th></tr></thead>' +
-    '<tbody>' + rows + '</tbody></table></body></html>';
+    '<tbody>' + rows + '</tbody></table>' +
+    '<script>document.addEventListener("click",function(e){var t=e.target.closest(".corr-copy");if(t){var id=t.getAttribute("data-corrid");navigator.clipboard.writeText(id).then(function(){t.textContent="\\u2713";setTimeout(function(){t.innerHTML="\\u2398";},800);});}});<\/script>' +
+    '</body></html>';
 
   w.document.write(html);
   w.document.close();
@@ -1031,7 +1161,12 @@ function showErrorAnalysis() {
   var totalIssues = 0;
   sorted.forEach(function(k) { totalIssues += issueCounts[k]; });
 
+  /* Build slice data for pie chart */
+  var errorSliceData = [];
+
   var html = '<p class="mb-2"><strong>' + errors.length + '</strong> request(s) returned errors: ' + statusSummary + '</p>';
+  html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
+  html += '<div style="flex:1; min-width:0;">';
   html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
   html += '<thead class="thead-light"><tr><th style="width:40%;">Issue</th><th style="width:50%;">Description</th><th style="width:10%; text-align:center;">Count</th></tr></thead><tbody>';
 
@@ -1051,11 +1186,13 @@ function showErrorAnalysis() {
     });
   });
 
-  sorted.forEach(function(issue) {
+  sorted.forEach(function(issue, idx) {
     var desc = issueDesc[issue] || '';
     var pct = ((issueCounts[issue] / totalIssues) * 100).toFixed(0);
-    html += '<tr class="issue-row" style="cursor:pointer;" data-issue="' + issue.replace(/"/g,'&quot;') + '">';
-    html += '<td><code style="font-size:12px; word-break:break-all;">' + issue + '</code></td>';
+    var sliceColor = PIE_COLORS[idx % PIE_COLORS.length];
+    errorSliceData.push({ label: issue, value: issueCounts[issue], color: sliceColor });
+    html += '<tr class="issue-row" style="cursor:pointer;" data-issue="' + issue.replace(/"/g,'&quot;') + '" data-slice-index="' + idx + '">';
+    html += '<td><span style="display:inline-block;width:10px;height:10px;background:' + sliceColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span><code style="font-size:12px; word-break:break-all;">' + issue + '</code></td>';
     html += '<td class="text-muted" style="font-size:90%;">' + desc + '</td>';
     html += '<td style="text-align:center;"><span class="badge badge-danger">' + issueCounts[issue] + '</span> <span class="text-muted" style="font-size:80%;">' + pct + '%</span></td>';
     html += '</tr>';
@@ -1063,8 +1200,13 @@ function showErrorAnalysis() {
 
   html += '</tbody></table>';
   html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a row to view its records in a new window.</p>';
+  html += '</div>';
+  html += '<div style="flex:0 0 220px; position:sticky; top:0;"><canvas id="pieChart_error" width="220" height="220"></canvas></div>';
+  html += '</div>';
 
   $('#errorAnalysisContent').html(html);
+
+  renderPieChart({ canvasId: 'pieChart_error', $container: $('#errorAnalysisContent'), slices: errorSliceData });
 
   /* Drill-down click handler */
   $('#errorAnalysisContent .issue-row').on('click', function() {
@@ -1121,7 +1263,13 @@ function showEndpointCount() {
       if (!matched) unmatchedRows.push(row);
     });
 
+    /* Build slice data for pie chart */
+    var endpointSliceData = [];
+    var endpointSliceIdx = 0;
+
     var html = '<p class="mb-2"><strong>' + tableItems.length + '</strong> total request(s) matched against <strong>' + patterns.length + '</strong> configured pattern(s):</p>';
+    html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
+    html += '<div style="flex:1; min-width:0;">';
     html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
     html += '<thead class="thead-light"><tr><th>Pattern</th><th style="text-align:center; width:80px;">Total</th><th style="text-align:center; width:80px;">Success</th><th style="text-align:center; width:80px;">Failed</th></tr></thead><tbody>';
 
@@ -1130,16 +1278,21 @@ function showEndpointCount() {
       if (total === 0) return;
       var sPct = total ? ((successCounts[p] / total) * 100).toFixed(0) : '0';
       var fPct = total ? ((failCounts[p] / total) * 100).toFixed(0) : '0';
-      html += '<tr>';
-      html += '<td><code style="font-size:12px;">' + p + '</code></td>';
+      var sliceColor = PIE_COLORS[endpointSliceIdx % PIE_COLORS.length];
+      endpointSliceData.push({ label: p, value: total, color: sliceColor });
+      html += '<tr data-slice-index="' + endpointSliceIdx + '">';
+      html += '<td><span style="display:inline-block;width:10px;height:10px;background:' + sliceColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span><code style="font-size:12px;">' + p + '</code></td>';
       html += '<td style="text-align:center;"><strong>' + total + '</strong></td>';
       html += '<td style="text-align:center;">' + (successCounts[p] ? '<span class="text-success">' + successCounts[p] + '</span> <span class="text-muted" style="font-size:80%;">' + sPct + '%</span>' : '<span class="text-muted">0</span>') + '</td>';
       html += '<td style="text-align:center;">' + (failCounts[p] ? '<span class="text-danger">' + failCounts[p] + '</span> <span class="text-muted" style="font-size:80%;">' + fPct + '%</span>' : '<span class="text-muted">0</span>') + '</td>';
       html += '</tr>';
+      endpointSliceIdx++;
     });
 
     if (unmatchedRows.length) {
-      html += '<tr class="table-warning" id="unmatchedRow" style="cursor:pointer;"><td><em>(unmatched)</em></td>';
+      var unmatchedColor = PIE_COLORS[endpointSliceIdx % PIE_COLORS.length];
+      endpointSliceData.push({ label: '(unmatched)', value: unmatchedRows.length, color: unmatchedColor });
+      html += '<tr class="table-warning" id="unmatchedRow" style="cursor:pointer;" data-slice-index="' + endpointSliceIdx + '"><td><span style="display:inline-block;width:10px;height:10px;background:' + unmatchedColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span><em>(unmatched)</em></td>';
       html += '<td style="text-align:center;"><strong>' + unmatchedRows.length + '</strong></td>';
       html += '<td style="text-align:center;" colspan="2"></td></tr>';
     }
@@ -1147,8 +1300,13 @@ function showEndpointCount() {
     html += '</tbody></table>';
     html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Patterns are configured in <code>server.js</code> &rarr; <code>API_PATTERNS</code> array.' +
       (unmatchedRows.length ? ' Click <em>(unmatched)</em> to view those records.' : '') + '</p>';
+    html += '</div>';
+    html += '<div style="flex:0 0 220px; position:sticky; top:0;"><canvas id="pieChart_endpoint" width="220" height="220"></canvas></div>';
+    html += '</div>';
 
     $('#endpointCountContent').html(html);
+
+    renderPieChart({ canvasId: 'pieChart_endpoint', $container: $('#endpointCountContent'), slices: endpointSliceData });
 
     if (unmatchedRows.length) {
       $('#unmatchedRow').on('click', function() {
@@ -1165,48 +1323,76 @@ function showEndpointCount() {
 
 /* ── Client IDs ── */
 function showClientIds() {
-  var clientMap = {};  /* client_id -> { total, success, fail, records } */
+  var clientMap = {};  /* client_id -> { total, success, fail, successRecords, failRecords } */
 
   tableItems.forEach(function(row) {
     var cid = row.client_id || '(unknown)';
-    if (!clientMap[cid]) clientMap[cid] = { total: 0, success: 0, fail: 0, records: [] };
+    if (!clientMap[cid]) clientMap[cid] = { total: 0, success: 0, fail: 0, successRecords: [], failRecords: [] };
     clientMap[cid].total++;
-    clientMap[cid].records.push(row);
     var status = parseInt(row.http_status || row.api_response.status);
-    if (status >= 200 && status < 300) clientMap[cid].success++;
-    else clientMap[cid].fail++;
+    if (status >= 200 && status < 300) { clientMap[cid].success++; clientMap[cid].successRecords.push(row); }
+    else { clientMap[cid].fail++; clientMap[cid].failRecords.push(row); }
   });
 
   var cids = Object.keys(clientMap).sort(function(a, b) {
     return clientMap[b].total - clientMap[a].total;
   });
 
+  /* Build slice data for pie chart */
+  var clientSliceData = [];
+
   var html = '<p class="mb-2"><strong>' + cids.length + '</strong> distinct client ID(s) across <strong>' + tableItems.length + '</strong> request(s):</p>';
+  html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
+  html += '<div style="flex:1; min-width:0;">';
   html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
   html += '<thead class="thead-light"><tr><th>Client ID</th><th style="text-align:center; width:70px;">Total</th><th style="text-align:center; width:90px;">Success</th><th style="text-align:center; width:90px;">Failed</th></tr></thead><tbody>';
 
-  cids.forEach(function(cid) {
+  cids.forEach(function(cid, idx) {
     var c = clientMap[cid];
     var sPct = c.total ? ((c.success / c.total) * 100).toFixed(0) : '0';
     var fPct = c.total ? ((c.fail / c.total) * 100).toFixed(0) : '0';
-    html += '<tr class="clientid-row" style="cursor:pointer;" data-cid="' + cid.replace(/"/g, '&quot;') + '">';
-    html += '<td><code style="font-size:11px; word-break:break-all;">' + cid + '</code></td>';
+    var escCid = cid.replace(/"/g, '&quot;');
+    var sliceColor = PIE_COLORS[idx % PIE_COLORS.length];
+    clientSliceData.push({ label: cid.length > 20 ? cid.slice(0, 8) + '...' + cid.slice(-6) : cid, value: c.total, color: sliceColor });
+    html += '<tr data-slice-index="' + idx + '">';
+    html += '<td><span style="display:inline-block;width:10px;height:10px;background:' + sliceColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span><code style="font-size:11px; word-break:break-all; user-select:all;">' + cid + '</code>';
+    if (cid !== '(unknown)') html += ' <span class="cid-copy" data-cid="' + escCid + '" title="Copy client ID" style="cursor:pointer; color:#888; font-size:14px;">&#x2398;</span>';
+    html += '</td>';
     html += '<td style="text-align:center;"><strong>' + c.total + '</strong></td>';
-    html += '<td style="text-align:center;">' + (c.success ? '<span class="text-success">' + c.success + '</span> <span class="text-muted" style="font-size:80%;">' + sPct + '%</span>' : '<span class="text-muted">0</span>') + '</td>';
-    html += '<td style="text-align:center;">' + (c.fail ? '<span class="text-danger">' + c.fail + '</span> <span class="text-muted" style="font-size:80%;">' + fPct + '%</span>' : '<span class="text-muted">0</span>') + '</td>';
+    html += '<td style="text-align:center;">' + (c.success ? '<a href="javascript:void(0);" class="cid-drill text-success font-weight-bold" data-cid="' + escCid + '" data-outcome="success" style="text-decoration:none;">' + c.success + '</a> <span class="text-muted" style="font-size:80%;">' + sPct + '%</span>' : '<span class="text-muted">0</span>') + '</td>';
+    html += '<td style="text-align:center;">' + (c.fail ? '<a href="javascript:void(0);" class="cid-drill text-danger font-weight-bold" data-cid="' + escCid + '" data-outcome="fail" style="text-decoration:none;">' + c.fail + '</a> <span class="text-muted" style="font-size:80%;">' + fPct + '%</span>' : '<span class="text-muted">0</span>') + '</td>';
     html += '</tr>';
   });
 
   html += '</tbody></table>';
-  html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a row to view its records in a new window.</p>';
+  html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a count to view those records in a new window.</p>';
+  html += '</div>';
+  html += '<div style="flex:0 0 220px; position:sticky; top:0;"><canvas id="pieChart_clients" width="220" height="220"></canvas></div>';
+  html += '</div>';
 
   $('#clientIdsContent').html(html);
 
-  $('#clientIdsContent .clientid-row').on('click', function() {
+  renderPieChart({ canvasId: 'pieChart_clients', $container: $('#clientIdsContent'), slices: clientSliceData });
+
+  /* Drill-down click handler */
+  $('#clientIdsContent').on('click', '.cid-drill', function() {
     var cid = $(this).data('cid');
-    var records = clientMap[cid] ? clientMap[cid].records : [];
+    var outcome = $(this).data('outcome');
+    var recs = clientMap[cid] ? clientMap[cid][outcome + 'Records'] : [];
+    if (!recs.length) return;
     var label = cid.length > 30 ? cid.slice(0, 10) + '...' + cid.slice(-10) : cid;
-    openFilteredWindow(records, 'Client ID: ' + label);
+    var labels = { success: 'Success', fail: 'Failed' };
+    openFilteredWindow(recs, labels[outcome] + ': ' + label);
+  });
+
+  /* Copy client ID */
+  $('#clientIdsContent').on('click', '.cid-copy', function() {
+    var el = $(this);
+    var cid = el.data('cid');
+    navigator.clipboard.writeText(cid).then(function() {
+      el.html('&#x2713;');
+      setTimeout(function() { el.html('&#x2398;'); }, 800);
+    });
   });
 
   $('#clientIdsModal').modal('show');
@@ -1314,8 +1500,13 @@ function showCaptureAnalysis() {
     return sourceMap[b].total - sourceMap[a].total;
   });
 
+  /* Build slice data for pie chart */
+  var captureSliceData = [];
+
   /* Build HTML */
   var html = '<p class="mb-2"><strong>' + records.length + '</strong> capture transaction(s) across <strong>' + sources.length + '</strong> payment source(s):</p>';
+  html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
+  html += '<div style="flex:1; min-width:0;">';
   html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
   html += '<thead class="thead-light"><tr>';
   html += '<th>Payment Source</th>';
@@ -1338,10 +1529,12 @@ function showCaptureAnalysis() {
     return '<a href="javascript:void(0);" class="' + cls + '" data-source="' + esc + '" data-outcome="' + outcome + '" style="' + style + '">' + count + '</a>' + pct(count, total);
   }
 
-  sources.forEach(function(src) {
+  sources.forEach(function(src, idx) {
     var s = sourceMap[src];
-    html += '<tr>';
-    html += '<td><code style="font-size:12px;">' + src + '</code></td>';
+    var sliceColor = PIE_COLORS[idx % PIE_COLORS.length];
+    captureSliceData.push({ label: src, value: s.total, color: sliceColor });
+    html += '<tr data-slice-index="' + idx + '">';
+    html += '<td><span style="display:inline-block;width:10px;height:10px;background:' + sliceColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span><code style="font-size:12px;">' + src + '</code></td>';
     html += '<td style="text-align:center;">' + drillCell(s.completed, s.total, src, 'completed', 'text-success') + '</td>';
     html += '<td style="text-align:center;">' + drillCell(s.pending, s.total, src, 'pending', '', '#e6a800') + '</td>';
     html += '<td style="text-align:center;">' + drillCell(s.failed, s.total, src, 'failed', 'text-danger') + '</td>';
@@ -1349,7 +1542,7 @@ function showCaptureAnalysis() {
     html += '</tr>';
   });
 
-  /* Totals row */
+  /* Totals row (no data-slice-index) */
   html += '<tr class="table-secondary font-weight-bold">';
   html += '<td>Total</td>';
   html += '<td style="text-align:center;" class="text-success">' + totals.completed + pct(totals.completed, totals.total) + '</td>';
@@ -1360,8 +1553,13 @@ function showCaptureAnalysis() {
 
   html += '</tbody></table>';
   html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a count to view those records in a new window.</p>';
+  html += '</div>';
+  html += '<div style="flex:0 0 220px; position:sticky; top:0;"><canvas id="pieChart_capture" width="220" height="220"></canvas></div>';
+  html += '</div>';
 
   $('#captureAnalysisContent').html(html);
+
+  renderPieChart({ canvasId: 'pieChart_capture', $container: $('#captureAnalysisContent'), slices: captureSliceData });
 
   /* Drill-down click handler */
   $('#captureAnalysisContent').on('click', '.capture-drill', function() {
@@ -1478,26 +1676,48 @@ function showDropOff() {
     return '<a href="javascript:void(0);" class="dropoff-drill font-weight-bold" data-bucket="' + id + '" style="color:' + color + '; text-decoration:none;">' + count + '</a>';
   }
 
+  /* Semantic colors for drop-off slices */
+  var dropoffSemanticColors = { completed: '#28a745', pending: '#e6a800', failed: '#dc3545', none: '#6c757d' };
+  var dropoffSliceData = [];
+  var dropoffSliceMeta = [
+    { key: 'completed', label: 'Capture completed', icon: '<span class="fa fa-check text-success"></span>' },
+    { key: 'pending', label: 'Capture pending', icon: '<span class="fa fa-clock-o" style="color:#e6a800;"></span>' },
+    { key: 'failed', label: 'Capture failed', icon: '<span class="fa fa-times text-danger"></span>' },
+    { key: 'none', label: 'No capture found', icon: '<span class="fa fa-sign-out" style="color:#e6a800;"></span>' }
+  ];
+
   html += '<p class="mb-3">Of <strong>' + totalCreates + '</strong> successful order creation(s) (<code>POST /v2/checkout/orders</code> &rarr; 201):</p>';
-  html += '<table class="table table-sm table-bordered mb-0" style="font-size:93%; max-width:500px;">';
+  html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
+  html += '<div style="flex:1; min-width:0;">';
+  html += '<table class="table table-sm table-bordered mb-0" style="font-size:93%;">';
   html += '<tbody>';
 
-  html += '<tr><td><span class="fa fa-check text-success"></span> Capture completed</td>';
-  html += '<td style="text-align:center; width:130px;">' + drillLink(buckets.completed.count, 'completed', '#28a745') + ' <span class="text-muted" style="font-size:80%;">' + pct(buckets.completed.count) + '%</span></td></tr>';
-
-  html += '<tr><td><span class="fa fa-clock-o" style="color:#e6a800;"></span> Capture pending</td>';
-  html += '<td style="text-align:center; width:130px;">' + drillLink(buckets.pending.count, 'pending', '#e6a800') + ' <span class="text-muted" style="font-size:80%;">' + pct(buckets.pending.count) + '%</span></td></tr>';
-
-  html += '<tr><td><span class="fa fa-times text-danger"></span> Capture failed</td>';
-  html += '<td style="text-align:center; width:130px;">' + drillLink(buckets.failed.count, 'failed', '#dc3545') + ' <span class="text-muted" style="font-size:80%;">' + pct(buckets.failed.count) + '%</span></td></tr>';
-
-  html += '<tr><td><span class="fa fa-sign-out" style="color:#e6a800;"></span> No capture found</td>';
-  html += '<td style="text-align:center; width:130px;">' + drillLink(buckets.none.count, 'none', '#e6a800') + ' <span class="text-muted" style="font-size:80%;">' + pct(buckets.none.count) + '%</span></td></tr>';
+  var dropoffSliceIdx = 0;
+  dropoffSliceMeta.forEach(function(meta) {
+    var count = buckets[meta.key].count;
+    var semColor = dropoffSemanticColors[meta.key];
+    if (count > 0) {
+      dropoffSliceData.push({ label: meta.label, value: count, color: semColor });
+      html += '<tr data-slice-index="' + dropoffSliceIdx + '">';
+      html += '<td><span style="display:inline-block;width:10px;height:10px;background:' + semColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span>' + meta.icon + ' ' + meta.label + '</td>';
+      html += '<td style="text-align:center; width:130px;">' + drillLink(count, meta.key, semColor) + ' <span class="text-muted" style="font-size:80%;">' + pct(count) + '%</span></td></tr>';
+      dropoffSliceIdx++;
+    } else {
+      html += '<tr>';
+      html += '<td><span style="display:inline-block;width:10px;height:10px;background:' + semColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;opacity:0.3;"></span>' + meta.icon + ' ' + meta.label + '</td>';
+      html += '<td style="text-align:center; width:130px;"><strong class="text-muted">0</strong> <span class="text-muted" style="font-size:80%;">' + pct(0) + '%</span></td></tr>';
+    }
+  });
 
   html += '</tbody></table>';
   html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a count to view those order creation records in a new window.</p>';
+  html += '</div>';
+  html += '<div style="flex:0 0 220px; position:sticky; top:0;"><canvas id="pieChart_dropoff" width="220" height="220"></canvas></div>';
+  html += '</div>';
 
   $('#dropOffContent').html(html);
+
+  renderPieChart({ canvasId: 'pieChart_dropoff', $container: $('#dropOffContent'), slices: dropoffSliceData });
 
   $('#dropOffContent').on('click', '.dropoff-drill', function() {
     var bucket = $(this).data('bucket');
@@ -1508,6 +1728,231 @@ function showDropOff() {
   });
 
   $('#dropOffModal').modal('show');
+}
+
+/* ── External URLs ── */
+function showExternalUrls() {
+  var paypalRe = /\.paypal\.com|\.paypalinc\.com|\.braintreegateway\.com|\.braintree-api\.com/i;
+  var urlRe = /https?:\/\/[^\s"'<>,;}\]]+/gi;
+
+  /* Recursively extract all URL strings from an object */
+  function extractUrls(obj) {
+    var urls = [];
+    if (!obj || typeof obj !== 'object') {
+      if (typeof obj === 'string') {
+        var matches = obj.match(urlRe);
+        if (matches) urls = urls.concat(matches);
+      }
+      return urls;
+    }
+    if (Array.isArray(obj)) {
+      obj.forEach(function(item) { urls = urls.concat(extractUrls(item)); });
+    } else {
+      Object.keys(obj).forEach(function(key) { urls = urls.concat(extractUrls(obj[key])); });
+    }
+    return urls;
+  }
+
+  /* Find the field name path for a URL value */
+  function findFieldNames(obj, targetUrl, prefix) {
+    var names = [];
+    if (!obj || typeof obj !== 'object') return names;
+    if (Array.isArray(obj)) {
+      obj.forEach(function(item, i) {
+        names = names.concat(findFieldNames(item, targetUrl, prefix + '[' + i + ']'));
+      });
+    } else {
+      Object.keys(obj).forEach(function(key) {
+        var val = obj[key];
+        if (typeof val === 'string' && val.indexOf(targetUrl) !== -1) {
+          names.push(key);
+        } else if (typeof val === 'object' && val !== null) {
+          names = names.concat(findFieldNames(val, targetUrl, prefix ? prefix + '.' + key : key));
+        }
+      });
+    }
+    return names;
+  }
+
+  /* urlMap: { url -> { count, fieldNames: Set, records: [] } } */
+  var urlMap = {};
+
+  tableItems.forEach(function(row) {
+    var reqUrls = extractUrls(row.api_request ? row.api_request.body : null);
+    var resUrls = extractUrls(row.api_response ? row.api_response.body : null);
+    var allUrls = reqUrls.concat(resUrls);
+
+    /* Deduplicate URLs within this single record */
+    var seen = {};
+    allUrls.forEach(function(u) {
+      /* Clean trailing punctuation artifacts */
+      u = u.replace(/[)}\]]+$/, '');
+      if (paypalRe.test(u)) return;
+      if (seen[u]) return;
+      seen[u] = true;
+
+      if (!urlMap[u]) urlMap[u] = { count: 0, fieldNames: {}, records: [] };
+      urlMap[u].count++;
+      urlMap[u].records.push(row);
+
+      /* Determine which field(s) held this URL */
+      var reqFields = findFieldNames(row.api_request ? row.api_request.body : null, u, '');
+      var resFields = findFieldNames(row.api_response ? row.api_response.body : null, u, '');
+      reqFields.concat(resFields).forEach(function(f) { urlMap[u].fieldNames[f] = true; });
+    });
+  });
+
+  var urls = Object.keys(urlMap).sort(function(a, b) {
+    return urlMap[b].count - urlMap[a].count;
+  });
+
+  if (!urls.length) {
+    $('#externalUrlsContent').html('<div class="alert alert-success mb-0">No external (non-PayPal) URLs found in the loaded data.</div>');
+    $('#externalUrlsModal').modal('show');
+    return;
+  }
+
+  /* Group by hostname (protocol-agnostic) for domain view */
+  var domainMap = {};  /* hostname -> { count, records: [], fieldNames: {} } */
+  urls.forEach(function(u) {
+    var host;
+    try { host = new URL(u).hostname; } catch(e) { host = '(invalid)'; }
+    if (!domainMap[host]) domainMap[host] = { count: 0, records: [], fieldNames: {} };
+    domainMap[host].count += urlMap[u].count;
+    /* Merge records (deduplicate by correlation_id) */
+    urlMap[u].records.forEach(function(r) {
+      var already = domainMap[host].records.some(function(existing) {
+        return existing.correlation_id && existing.correlation_id === r.correlation_id;
+      });
+      if (!already) domainMap[host].records.push(r);
+    });
+    /* Merge field names */
+    Object.keys(urlMap[u].fieldNames).forEach(function(f) { domainMap[host].fieldNames[f] = true; });
+  });
+  var domains = Object.keys(domainMap).sort(function(a, b) { return domainMap[b].count - domainMap[a].count; });
+
+  var totalRefs = 0;
+  urls.forEach(function(u) { totalRefs += urlMap[u].count; });
+
+  /* --- render functions for each view --- */
+  function renderByUrl() {
+    /* Pie slices by hostname */
+    var hostCounts = {};
+    urls.forEach(function(u) {
+      var host;
+      try { host = new URL(u).hostname; } catch(e) { host = '(invalid)'; }
+      hostCounts[host] = (hostCounts[host] || 0) + urlMap[u].count;
+    });
+    var hostsSorted = Object.keys(hostCounts).sort(function(a, b) { return hostCounts[b] - hostCounts[a]; });
+    var sliceData = [];
+    hostsSorted.forEach(function(host, idx) {
+      sliceData.push({ label: host, value: hostCounts[host], color: PIE_COLORS[idx % PIE_COLORS.length] });
+    });
+    var hostSliceIndex = {};
+    hostsSorted.forEach(function(host, idx) { hostSliceIndex[host] = idx; });
+
+    var html = '<p class="mb-2"><strong>' + urls.length + '</strong> distinct external URL(s) across <strong>' + totalRefs + '</strong> reference(s):</p>';
+    html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
+    html += '<div style="flex:1; min-width:0; overflow:auto; max-height:calc(100vh - 350px);">';
+    html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
+    html += '<thead class="thead-light"><tr><th>URL</th><th style="width:130px;">Field(s)</th><th style="width:70px; text-align:center;">Count</th></tr></thead><tbody>';
+
+    urls.forEach(function(u, idx) {
+      var entry = urlMap[u];
+      var fields = Object.keys(entry.fieldNames);
+      var fieldHtml = fields.map(function(f) { return '<code style="font-size:11px;">' + f + '</code>'; }).join(', ') || '<span class="text-muted">-</span>';
+      var host;
+      try { host = new URL(u).hostname; } catch(e) { host = '(invalid)'; }
+      var sliceIdx = hostSliceIndex[host] !== undefined ? hostSliceIndex[host] : 0;
+      var sliceColor = PIE_COLORS[sliceIdx % PIE_COLORS.length];
+
+      html += '<tr class="exturl-row" style="cursor:pointer;" data-url-index="' + idx + '" data-slice-index="' + sliceIdx + '">';
+      html += '<td><span style="display:inline-block;width:10px;height:10px;background:' + sliceColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span><span style="font-size:12px; word-break:break-all;">' + u.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</span></td>';
+      html += '<td>' + fieldHtml + '</td>';
+      html += '<td style="text-align:center;"><span class="font-weight-bold">' + entry.count + '</span></td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a row to view those API history records in a new window.</p>';
+    html += '</div>';
+    html += '<div style="flex:0 0 220px; position:sticky; top:0;"><canvas id="pieChart_exturls" width="220" height="220"></canvas></div>';
+    html += '</div>';
+
+    $('#exturlTableArea').html(html);
+    renderPieChart({ canvasId: 'pieChart_exturls', $container: $('#exturlTableArea'), slices: sliceData });
+
+    $('#exturlTableArea').off('click', '.exturl-row').on('click', '.exturl-row', function() {
+      var urlIdx = $(this).data('url-index');
+      var u = urls[urlIdx];
+      var recs = urlMap[u] ? urlMap[u].records : [];
+      if (!recs.length) return;
+      var displayUrl = u.length > 60 ? u.slice(0, 50) + '...' : u;
+      openFilteredWindow(recs, 'External URL: ' + displayUrl);
+    });
+  }
+
+  function renderByDomain() {
+    var sliceData = [];
+    domains.forEach(function(host, idx) {
+      sliceData.push({ label: host, value: domainMap[host].count, color: PIE_COLORS[idx % PIE_COLORS.length] });
+    });
+
+    var html = '<p class="mb-2"><strong>' + domains.length + '</strong> distinct domain(s) across <strong>' + totalRefs + '</strong> reference(s):</p>';
+    html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
+    html += '<div style="flex:1; min-width:0; overflow:auto; max-height:calc(100vh - 350px);">';
+    html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
+    html += '<thead class="thead-light"><tr><th>Domain</th><th style="width:130px;">Field(s)</th><th style="width:90px; text-align:center;">Requests</th><th style="width:70px; text-align:center;">Refs</th></tr></thead><tbody>';
+
+    domains.forEach(function(host, idx) {
+      var entry = domainMap[host];
+      var fields = Object.keys(entry.fieldNames);
+      var fieldHtml = fields.map(function(f) { return '<code style="font-size:11px;">' + f + '</code>'; }).join(', ') || '<span class="text-muted">-</span>';
+      var sliceColor = PIE_COLORS[idx % PIE_COLORS.length];
+
+      html += '<tr class="extdomain-row" style="cursor:pointer;" data-domain-index="' + idx + '" data-slice-index="' + idx + '">';
+      html += '<td><span style="display:inline-block;width:10px;height:10px;background:' + sliceColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span><span style="font-size:12px; word-break:break-all;">' + host.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</span></td>';
+      html += '<td>' + fieldHtml + '</td>';
+      html += '<td style="text-align:center;"><span class="font-weight-bold">' + entry.records.length + '</span></td>';
+      html += '<td style="text-align:center;"><span class="font-weight-bold">' + entry.count + '</span></td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a row to view those API history records in a new window.</p>';
+    html += '</div>';
+    html += '<div style="flex:0 0 220px; position:sticky; top:0;"><canvas id="pieChart_exturls" width="220" height="220"></canvas></div>';
+    html += '</div>';
+
+    $('#exturlTableArea').html(html);
+    renderPieChart({ canvasId: 'pieChart_exturls', $container: $('#exturlTableArea'), slices: sliceData });
+
+    $('#exturlTableArea').off('click', '.extdomain-row').on('click', '.extdomain-row', function() {
+      var domIdx = $(this).data('domain-index');
+      var host = domains[domIdx];
+      var recs = domainMap[host] ? domainMap[host].records : [];
+      if (!recs.length) return;
+      openFilteredWindow(recs, 'Domain: ' + host);
+    });
+  }
+
+  /* --- Build outer shell with toggle --- */
+  var shell = '<div class="btn-group btn-group-toggle mb-2" data-toggle="buttons">';
+  shell += '<label class="btn btn-sm btn-outline-secondary active" id="extViewDomain"><input type="radio" name="exturlView" autocomplete="off" checked> By Domain</label>';
+  shell += '<label class="btn btn-sm btn-outline-secondary" id="extViewUrl"><input type="radio" name="exturlView" autocomplete="off"> By URL</label>';
+  shell += '</div>';
+  shell += '<div id="exturlTableArea"></div>';
+
+  $('#externalUrlsContent').html(shell);
+
+  /* Toggle handlers */
+  $('#extViewDomain').on('click', function() { renderByDomain(); });
+  $('#extViewUrl').on('click', function() { renderByUrl(); });
+
+  /* Default view */
+  renderByDomain();
+
+  $('#externalUrlsModal').modal('show');
 }
 
 /* ── Load data from file picker ── */
@@ -1534,6 +1979,18 @@ function loadAndRender(allData) {
   var dupes = before - allData.length;
   if (dupes) console.log('Deduplicated: removed ' + dupes + ' duplicate(s) by correlation_id');
 
+  /* Auto-detect environment from data URLs */
+  apiHistoryEnv = 'live';
+  for (var j = 0; j < Math.min(allData.length, 20); j++) {
+    if (JSON.stringify(allData[j]).indexOf('api-m.sandbox.paypal.com') !== -1) {
+      apiHistoryEnv = 'sandbox';
+      break;
+    }
+  }
+  var envLabel = apiHistoryEnv === 'sandbox' ? 'Sandbox' : 'Live';
+  var envColor = apiHistoryEnv === 'sandbox' ? '#e6a800' : '#28a745';
+  $('#env-badge').html('<span class="badge" style="background-color:' + envColor + '; color:#fff;">' + envLabel + '</span>').show();
+
   allLoadedData = allData;
   document.title = allLoadedData.length + ' events - Local REST API Explorer';
   applyExclusions();
@@ -1545,6 +2002,7 @@ $(document).ready(function() {
   $('#btnClientIds').on('click', showClientIds);
   $('#btnCaptureAnalysis').on('click', showCaptureAnalysis);
   $('#btnDropOff').on('click', showDropOff);
+  $('#btnExternalUrls').on('click', showExternalUrls);
 
   /* Exclude filter events */
   $('#exclude-add-btn').on('click', function() {
