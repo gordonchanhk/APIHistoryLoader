@@ -1404,20 +1404,37 @@ function showCaptureAnalysis() {
   var captureOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)\/capture$/;
   var getOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)$/;
 
-  /* Build lookup: order ID → payment_source from GET /v2/checkout/orders/{id} records */
+  /* Build lookup: order ID → payment_source from order records */
   var orderPaymentSource = {};
   tableItems.forEach(function(row) {
     var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
     var url = row.url || '';
     if (method !== 'GET' && method !== 'POST') return;
+
+    var orderId = null;
+    /* GET/POST /v2/checkout/orders/{id} — order ID is in the URL */
     var m = url.match(getOrderRe);
-    if (!m) return;
-    var orderId = m[1];
-    if (orderPaymentSource[orderId]) return;
+    if (m) orderId = m[1];
+    /* POST /v2/checkout/orders — order ID is in the response body */
+    if (!orderId && createOrderRe.test(url) && method === 'POST') {
+      try { orderId = row.api_response.body.id; } catch(e) {}
+    }
+
+    if (!orderId || orderPaymentSource[orderId]) return;
     try {
       var ps = row.api_response.body.payment_source;
       if (ps) orderPaymentSource[orderId] = Object.keys(ps)[0];
     } catch(e) {}
+  });
+
+  /* Count order creations (POST /v2/checkout/orders -> 2xx) */
+  var totalOrderCreates = 0;
+  tableItems.forEach(function(row) {
+    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
+    if (method !== 'POST') return;
+    if (!createOrderRe.test(row.url || '')) return;
+    var httpStatus = parseInt(row.http_status || (row.api_response && row.api_response.status));
+    if (httpStatus >= 200 && httpStatus < 300) totalOrderCreates++;
   });
 
   var records = [];
@@ -1441,6 +1458,11 @@ function showCaptureAnalysis() {
 
     /* For order-create URLs, only include if captures data exists or if error */
     if (isCreate && !captureStatus && httpStatus >= 200 && httpStatus < 400) return;
+
+    /* Resolve order ID for per-order tracking */
+    var orderId = null;
+    if (isCapture && captureMatch[1]) orderId = captureMatch[1];
+    else if (isCreate) { try { orderId = body.id; } catch(e) {} }
 
     /* Get payment source type from response, fallback to request body */
     var paymentSource = null;
@@ -1471,6 +1493,7 @@ function showCaptureAnalysis() {
       row: row,
       paymentSource: paymentSource || '(unknown)',
       outcome: outcome,
+      orderId: orderId,
       type: isCreate ? 'create' : 'capture'
     });
   });
@@ -1481,11 +1504,19 @@ function showCaptureAnalysis() {
     return;
   }
 
-  /* Group by payment source */
+  /* Separate known vs unknown payment source records */
+  var knownRecords = [];
+  var unknownRecords = [];
+  records.forEach(function(rec) {
+    if (rec.paymentSource === '(unknown)') unknownRecords.push(rec);
+    else knownRecords.push(rec);
+  });
+
+  /* Group known records by payment source */
   var sourceMap = {};
   var totals = { completed: 0, pending: 0, failed: 0, total: 0 };
 
-  records.forEach(function(rec) {
+  knownRecords.forEach(function(rec) {
     var src = rec.paymentSource;
     if (!sourceMap[src]) sourceMap[src] = { completed: 0, pending: 0, failed: 0, total: 0, completedRecords: [], pendingRecords: [], failedRecords: [] };
     sourceMap[src][rec.outcome]++;
@@ -1500,21 +1531,67 @@ function showCaptureAnalysis() {
     return sourceMap[b].total - sourceMap[a].total;
   });
 
+  /* Group unknown records by error issue */
+  var unknownIssueMap = {};  /* issue -> { count, records: [] } */
+  unknownRecords.forEach(function(rec) {
+    var issue = '(no details)';
+    try {
+      var body = rec.row.api_response.body;
+      var details = body.details || [];
+      if (details.length && details[0].issue) issue = details[0].issue;
+      else if (body.name) issue = body.name;
+    } catch(e) {}
+    if (!unknownIssueMap[issue]) unknownIssueMap[issue] = { count: 0, records: [] };
+    unknownIssueMap[issue].count++;
+    unknownIssueMap[issue].records.push(rec.row);
+  });
+  var unknownIssues = Object.keys(unknownIssueMap).sort(function(a, b) {
+    return unknownIssueMap[b].count - unknownIssueMap[a].count;
+  });
+
+  /* Failed capture reasons (all failed records, known + unknown) */
+  var failIssueMap = {};  /* issue -> { count, records: [] } */
+  records.forEach(function(rec) {
+    if (rec.outcome !== 'failed') return;
+    var issue = '(no details)';
+    try {
+      var body = rec.row.api_response.body;
+      var details = body.details || [];
+      if (details.length && details[0].issue) issue = details[0].issue;
+      else if (body.name) issue = body.name;
+    } catch(e) {}
+    if (!failIssueMap[issue]) failIssueMap[issue] = { count: 0, records: [] };
+    failIssueMap[issue].count++;
+    failIssueMap[issue].records.push(rec.row);
+  });
+  var failIssues = Object.keys(failIssueMap).sort(function(a, b) {
+    return failIssueMap[b].count - failIssueMap[a].count;
+  });
+
+  /* Per-order outcome tracking: find orders with both failed and completed */
+  var orderOutcomeSet = {};  /* orderId -> Set-like { failed: bool, completed: bool } */
+  var orderFailSuccessRecords = [];
+  records.forEach(function(rec) {
+    if (!rec.orderId) return;
+    if (!orderOutcomeSet[rec.orderId]) orderOutcomeSet[rec.orderId] = { failed: false, completed: false, records: [] };
+    if (rec.outcome === 'failed') orderOutcomeSet[rec.orderId].failed = true;
+    if (rec.outcome === 'completed') orderOutcomeSet[rec.orderId].completed = true;
+    orderOutcomeSet[rec.orderId].records.push(rec.row);
+  });
+  var failedAlsoSucceeded = 0;
+  Object.keys(orderOutcomeSet).forEach(function(oid) {
+    var o = orderOutcomeSet[oid];
+    if (o.failed && o.completed) {
+      failedAlsoSucceeded++;
+      orderFailSuccessRecords = orderFailSuccessRecords.concat(o.records);
+    }
+  });
+
   /* Build slice data for pie chart */
   var captureSliceData = [];
 
   /* Build HTML */
-  var html = '<p class="mb-2"><strong>' + records.length + '</strong> capture transaction(s) across <strong>' + sources.length + '</strong> payment source(s):</p>';
-  html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
-  html += '<div style="flex:1; min-width:0;">';
-  html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
-  html += '<thead class="thead-light"><tr>';
-  html += '<th>Payment Source</th>';
-  html += '<th style="text-align:center; width:90px;">Completed</th>';
-  html += '<th style="text-align:center; width:90px;">Pending</th>';
-  html += '<th style="text-align:center; width:90px;">Failed</th>';
-  html += '<th style="text-align:center; width:70px;">Total</th>';
-  html += '</tr></thead><tbody>';
+  var knownCount = knownRecords.length;
 
   function pct(count, total) {
     if (!count || !total) return '';
@@ -1529,6 +1606,30 @@ function showCaptureAnalysis() {
     return '<a href="javascript:void(0);" class="' + cls + '" data-source="' + esc + '" data-outcome="' + outcome + '" style="' + style + '">' + count + '</a>' + pct(count, total);
   }
 
+  /* Summary lines */
+  var html = '<p class="mb-1" style="font-size:93%;">';
+  html += '<span class="fa fa-shopping-cart text-muted" style="margin-right:3px;"></span> ';
+  html += 'Orders created (<code>POST /v2/checkout/orders</code> &rarr; 2xx): <strong>' + totalOrderCreates + '</strong>';
+  if (failedAlsoSucceeded > 0) {
+    html += ' &nbsp;|&nbsp; <span class="fa fa-refresh" style="color:#17a2b8; margin-right:3px;"></span>';
+    html += 'Orders with failed capture but also succeeded: ';
+    html += '<a href="javascript:void(0);" class="fail-also-success-drill font-weight-bold" style="text-decoration:none; color:#17a2b8;">' + failedAlsoSucceeded + '</a>';
+  }
+  html += '</p>';
+
+  /* Payment source table */
+  html += '<p class="mb-2 mt-2"><strong>' + knownCount + '</strong> capture transaction(s) across <strong>' + sources.length + '</strong> payment source(s)' + (unknownRecords.length ? ' <span class="text-muted" style="font-size:85%;">(' + unknownRecords.length + ' with unknown source excluded)</span>' : '') + ':</p>';
+  html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
+  html += '<div style="flex:1; min-width:0;">';
+  html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
+  html += '<thead class="thead-light"><tr>';
+  html += '<th>Payment Source</th>';
+  html += '<th style="text-align:center; width:90px;">Completed</th>';
+  html += '<th style="text-align:center; width:90px;">Pending</th>';
+  html += '<th style="text-align:center; width:90px;">Failed</th>';
+  html += '<th style="text-align:center; width:70px;">Total</th>';
+  html += '</tr></thead><tbody>';
+
   sources.forEach(function(src, idx) {
     var s = sourceMap[src];
     var sliceColor = PIE_COLORS[idx % PIE_COLORS.length];
@@ -1542,7 +1643,7 @@ function showCaptureAnalysis() {
     html += '</tr>';
   });
 
-  /* Totals row (no data-slice-index) */
+  /* Totals row */
   html += '<tr class="table-secondary font-weight-bold">';
   html += '<td>Total</td>';
   html += '<td style="text-align:center;" class="text-success">' + totals.completed + pct(totals.completed, totals.total) + '</td>';
@@ -1557,11 +1658,31 @@ function showCaptureAnalysis() {
   html += '<div style="flex:0 0 220px; position:sticky; top:0;"><canvas id="pieChart_capture" width="220" height="220"></canvas></div>';
   html += '</div>';
 
+  /* Failed capture reasons table */
+  if (failIssues.length) {
+    var totalFailed = totals.failed + unknownRecords.filter(function(r) { return r.outcome === 'failed'; }).length;
+    html += '<hr style="margin:14px 0 10px;">';
+    html += '<p class="mb-2"><span class="fa fa-exclamation-circle text-danger" style="margin-right:3px;"></span> <strong>' + totalFailed + '</strong> capture failure(s) by error reason:</p>';
+    html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%; max-width:600px;">';
+    html += '<thead class="thead-light"><tr><th>Error Issue</th><th style="text-align:center; width:70px;">Count</th></tr></thead><tbody>';
+
+    failIssues.forEach(function(issue) {
+      var entry = failIssueMap[issue];
+      html += '<tr class="fail-issue-row" style="cursor:pointer;" data-issue="' + issue.replace(/"/g,'&quot;') + '">';
+      html += '<td><code style="font-size:12px;">' + issue + '</code></td>';
+      html += '<td style="text-align:center;"><span class="font-weight-bold text-danger">' + entry.count + '</span></td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a row to view those records in a new window.</p>';
+  }
+
   $('#captureAnalysisContent').html(html);
 
   renderPieChart({ canvasId: 'pieChart_capture', $container: $('#captureAnalysisContent'), slices: captureSliceData });
 
-  /* Drill-down click handler */
+  /* Drill-down click handler for known payment sources */
   $('#captureAnalysisContent').on('click', '.capture-drill', function() {
     var src = $(this).data('source');
     var outcome = $(this).data('outcome');
@@ -1569,6 +1690,20 @@ function showCaptureAnalysis() {
     if (!recs.length) return;
     var labels = { completed: 'Completed', pending: 'Pending', failed: 'Failed' };
     openFilteredWindow(recs, labels[outcome] + ' Captures: ' + src);
+  });
+
+  /* Drill-down click handler for failed issue rows */
+  $('#captureAnalysisContent').on('click', '.fail-issue-row', function() {
+    var issue = $(this).data('issue');
+    var recs = failIssueMap[issue] ? failIssueMap[issue].records : [];
+    if (!recs.length) return;
+    openFilteredWindow(recs, 'Failed Captures: ' + issue);
+  });
+
+  /* Drill-down click handler for fail-also-success link */
+  $('#captureAnalysisContent').on('click', '.fail-also-success-drill', function() {
+    if (!orderFailSuccessRecords.length) return;
+    openFilteredWindow(orderFailSuccessRecords, 'Orders with Failed + Successful Capture');
   });
 
   $('#captureAnalysisModal').modal('show');
@@ -1645,7 +1780,7 @@ function showDropOff() {
     if (row.url !== '/v2/checkout/orders') return;
 
     var httpStatus = parseInt(row.http_status || (row.api_response && row.api_response.status));
-    if (httpStatus !== 201) return;
+    if (httpStatus < 200 || httpStatus >= 300) return;
 
     totalCreates++;
 
@@ -1686,7 +1821,7 @@ function showDropOff() {
     { key: 'none', label: 'No capture found', icon: '<span class="fa fa-sign-out" style="color:#e6a800;"></span>' }
   ];
 
-  html += '<p class="mb-3">Of <strong>' + totalCreates + '</strong> successful order creation(s) (<code>POST /v2/checkout/orders</code> &rarr; 201):</p>';
+  html += '<p class="mb-3">Of <strong>' + totalCreates + '</strong> successful order creation(s) (<code>POST /v2/checkout/orders</code> &rarr; 2xx):</p>';
   html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
   html += '<div style="flex:1; min-width:0;">';
   html += '<table class="table table-sm table-bordered mb-0" style="font-size:93%;">';
