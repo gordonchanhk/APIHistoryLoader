@@ -15,6 +15,8 @@ const API_PATTERNS = [
   'POST /v2/checkout/orders/*/capture',
   'POST /v2/payments/captures/*/refund',
   'GET /v2/payments/captures/*',
+  'POST /v2/checkout/orders/*/authorize',
+  'POST /v2/payments/authorizations/*/capture',
   'POST /v2/payments/find-eligible-methods',
   'POST /v1/billing/subscriptions',
   'GET /v1/billing/subscriptions/*',
