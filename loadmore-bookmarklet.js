@@ -239,9 +239,9 @@
             return;
           }
 
-          /* Every 10 pages, ask to continue */
-          if (pageCount > 0 && pageCount % 10 === 0) {
-            if (!confirm('Loaded ' + pageCount + ' pages (' + tableItems.length + ' records so far). Continue?')) {
+          /* Every 10,000 records, ask to continue */
+          if (tableItems.length >= 10000 && Math.floor((tableItems.length - added) / 10000) < Math.floor(tableItems.length / 10000)) {
+            if (!confirm('Loaded ' + tableItems.length + ' records so far. Continue?')) {
               finishLoading('<span class="fa fa-download"></span> Load More (' + tableItems.length + ' loaded)');
               return;
             }
