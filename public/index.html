@@ -1886,10 +1886,29 @@ function showCaptureAnalysis() {
 /* ── Drop-off Analysis ── */
 function showDropOff() {
   var captureOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)\/capture$/;
+  var authorizeOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)\/authorize$/;
+  var authCaptureRe = /^\/v2\/payments\/authorizations\/([^\/]+)\/capture$/;
+
+  /* Build lookup: authorization ID → order ID from authorize records */
+  var authToOrder = {};
+  tableItems.forEach(function(row) {
+    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
+    if (method !== 'POST') return;
+    var m = (row.url || '').match(authorizeOrderRe);
+    if (!m) return;
+    var orderId = m[1];
+    try {
+      var authId = row.api_response.body.purchase_units[0].payments.authorizations[0].id;
+      if (authId) authToOrder[authId] = orderId;
+    } catch(e) {}
+  });
 
   /* Build per-order capture outcome: best result wins (completed > pending > failed) */
   /* orderOutcome[orderId] = { outcome: 'completed'|'pending'|'failed', records: [...] } */
   var orderOutcome = {};
+  /* Build per-order authorize outcome */
+  /* orderAuthOutcome[orderId] = { outcome: 'auth_completed'|'auth_declined'|'auth_failed', records: [...] } */
+  var orderAuthOutcome = {};
 
   tableItems.forEach(function(row) {
     var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
@@ -1898,6 +1917,8 @@ function showDropOff() {
 
     var orderId = null;
     var captureStatus = null;
+    var authStatus = null;
+    var isAuth = false;
     var httpStatus = parseInt(row.http_status || (row.api_response && row.api_response.status));
 
     /* Explicit capture call */
@@ -1905,6 +1926,26 @@ function showDropOff() {
     if (m) {
       orderId = m[1];
       try { captureStatus = row.api_response.body.purchase_units[0].payments.captures[0].status; } catch(e) {}
+    }
+
+    /* Explicit authorize call */
+    if (!orderId) {
+      var ma = url.match(authorizeOrderRe);
+      if (ma) {
+        orderId = ma[1];
+        isAuth = true;
+        try { authStatus = row.api_response.body.purchase_units[0].payments.authorizations[0].status; } catch(e) {}
+      }
+    }
+
+    /* Auth-capture: POST /v2/payments/authorizations/{authId}/capture */
+    if (!orderId) {
+      var mac = url.match(authCaptureRe);
+      if (mac) {
+        var authId = mac[1];
+        orderId = authToOrder[authId] || null;
+        captureStatus = (row.api_response && row.api_response.body && row.api_response.body.status) || null;
+      }
     }
 
     /* Inline capture: POST /v2/checkout/orders with captures in response */
@@ -1920,21 +1961,40 @@ function showDropOff() {
 
     if (!orderId) return;
 
-    /* Determine outcome for this capture attempt */
-    var outcome;
-    if (httpStatus >= 400) outcome = 'failed';
-    else if (captureStatus === 'COMPLETED') outcome = 'completed';
-    else if (captureStatus === 'PENDING') outcome = 'pending';
-    else if (captureStatus === 'DECLINED' || captureStatus === 'DENIED') outcome = 'failed';
-    else return;
+    if (isAuth) {
+      /* Determine authorize outcome */
+      var outcome;
+      if (httpStatus >= 400) outcome = 'auth_failed';
+      else if (authStatus === 'DENIED') outcome = 'auth_declined';
+      else if (authStatus) outcome = 'auth_completed';
+      else return;
 
-    if (!orderOutcome[orderId]) orderOutcome[orderId] = { outcome: outcome, records: [row] };
-    else {
-      orderOutcome[orderId].records.push(row);
-      /* Upgrade outcome: completed > pending > failed */
-      var cur = orderOutcome[orderId].outcome;
-      if (outcome === 'completed' || (outcome === 'pending' && cur === 'failed')) {
-        orderOutcome[orderId].outcome = outcome;
+      if (!orderAuthOutcome[orderId]) orderAuthOutcome[orderId] = { outcome: outcome, records: [row] };
+      else {
+        orderAuthOutcome[orderId].records.push(row);
+        /* Upgrade: auth_completed > auth_declined > auth_failed */
+        var cur = orderAuthOutcome[orderId].outcome;
+        if (outcome === 'auth_completed' || (outcome === 'auth_declined' && cur === 'auth_failed')) {
+          orderAuthOutcome[orderId].outcome = outcome;
+        }
+      }
+    } else {
+      /* Determine capture outcome */
+      var outcome;
+      if (httpStatus >= 400) outcome = 'failed';
+      else if (captureStatus === 'COMPLETED') outcome = 'completed';
+      else if (captureStatus === 'PENDING') outcome = 'pending';
+      else if (captureStatus === 'DECLINED' || captureStatus === 'DENIED') outcome = 'failed';
+      else return;
+
+      if (!orderOutcome[orderId]) orderOutcome[orderId] = { outcome: outcome, records: [row] };
+      else {
+        orderOutcome[orderId].records.push(row);
+        /* Upgrade outcome: completed > pending > failed */
+        var cur = orderOutcome[orderId].outcome;
+        if (outcome === 'completed' || (outcome === 'pending' && cur === 'failed')) {
+          orderOutcome[orderId].outcome = outcome;
+        }
       }
     }
   });
@@ -1942,10 +2002,13 @@ function showDropOff() {
   /* Scan order creations and classify each */
   var totalCreates = 0;
   var buckets = {
-    completed: { count: 0, orders: [] },
-    pending:   { count: 0, orders: [] },
-    failed:    { count: 0, orders: [] },
-    none:      { count: 0, orders: [] }
+    completed:      { count: 0, orders: [] },
+    pending:        { count: 0, orders: [] },
+    failed:         { count: 0, orders: [] },
+    auth_completed: { count: 0, orders: [] },
+    auth_declined:  { count: 0, orders: [] },
+    auth_failed:    { count: 0, orders: [] },
+    none:           { count: 0, orders: [] }
   };
 
   tableItems.forEach(function(row) {
@@ -1961,11 +2024,21 @@ function showDropOff() {
     var orderId = null;
     try { orderId = row.api_response.body.id; } catch(e) {}
 
+    /* Cumulative funnel: count an order in every stage it reached */
+    var classified = false;
     if (orderId && orderOutcome[orderId]) {
       var bucket = orderOutcome[orderId].outcome;
       buckets[bucket].count++;
       buckets[bucket].orders.push(row);
-    } else {
+      classified = true;
+    }
+    if (orderId && orderAuthOutcome[orderId]) {
+      var bucket = orderAuthOutcome[orderId].outcome;
+      buckets[bucket].count++;
+      buckets[bucket].orders.push(row);
+      classified = true;
+    }
+    if (!classified) {
       buckets.none.count++;
       buckets.none.orders.push(row);
     }
@@ -1986,16 +2059,23 @@ function showDropOff() {
   }
 
   /* Semantic colors for drop-off slices */
-  var dropoffSemanticColors = { completed: '#28a745', pending: '#e6a800', failed: '#dc3545', none: '#6c757d' };
+  var dropoffSemanticColors = {
+    completed: '#28a745', pending: '#e6a800', failed: '#dc3545',
+    auth_completed: '#17a2b8', auth_declined: '#fd7e14', auth_failed: '#6f42c1',
+    none: '#6c757d'
+  };
   var dropoffSliceData = [];
   var dropoffSliceMeta = [
     { key: 'completed', label: 'Capture completed', icon: '<span class="fa fa-check text-success"></span>' },
     { key: 'pending', label: 'Capture pending', icon: '<span class="fa fa-clock-o" style="color:#e6a800;"></span>' },
     { key: 'failed', label: 'Capture failed', icon: '<span class="fa fa-times text-danger"></span>' },
-    { key: 'none', label: 'No capture found', icon: '<span class="fa fa-sign-out" style="color:#e6a800;"></span>' }
+    { key: 'auth_completed', label: 'Authorize completed', icon: '<span class="fa fa-lock" style="color:#17a2b8;"></span>' },
+    { key: 'auth_declined', label: 'Authorize declined', icon: '<span class="fa fa-ban" style="color:#fd7e14;"></span>' },
+    { key: 'auth_failed', label: 'Authorize failed', icon: '<span class="fa fa-times" style="color:#6f42c1;"></span>' },
+    { key: 'none', label: 'Drop-off (no capture/authorize)', icon: '<span class="fa fa-sign-out" style="color:#6c757d;"></span>' }
   ];
 
-  html += '<p class="mb-3">Of <strong>' + totalCreates + '</strong> successful order creation(s) (<code>POST /v2/checkout/orders</code> &rarr; 2xx):</p>';
+  html += '<p class="mb-3">Of <strong>' + totalCreates + '</strong> successful order creation(s) (<code>POST /v2/checkout/orders</code> &rarr; 2xx), cumulative funnel &mdash; an order may count in multiple stages:</p>';
   html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
   html += '<div style="flex:1; min-width:0;">';
   html += '<table class="table table-sm table-bordered mb-0" style="font-size:93%;">';
@@ -2032,7 +2112,11 @@ function showDropOff() {
     var bucket = $(this).data('bucket');
     var recs = buckets[bucket] ? buckets[bucket].orders : [];
     if (!recs.length) return;
-    var labels = { completed: 'Capture Completed', pending: 'Capture Pending', failed: 'Capture Failed', none: 'No Capture Found' };
+    var labels = {
+      completed: 'Capture Completed', pending: 'Capture Pending', failed: 'Capture Failed',
+      auth_completed: 'Authorize Completed', auth_declined: 'Authorize Declined', auth_failed: 'Authorize Failed',
+      none: 'Drop-off (No Capture/Authorize)'
+    };
     openFilteredWindow(recs, 'Orders: ' + labels[bucket]);
   });
 
