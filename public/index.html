@@ -129,6 +129,20 @@ tr.pie-highlight {
   background-color: rgba(0, 123, 255, 0.12) !important;
   transition: background-color 0.15s ease;
 }
+
+/* ── Funnel chart (Drop-off) ── */
+.funnel-wrap { padding: 6px 0 2px; }
+.funnel-row { margin: 4px 0; text-align: center; }
+.funnel-bar {
+  display: inline-block; min-width: 42px; height: 32px; line-height: 32px;
+  border-radius: 4px; color: #fff; font-weight: bold; font-size: 92%;
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.12); transition: filter .15s;
+}
+.funnel-bar.funnel-click { cursor: pointer; }
+.funnel-bar.funnel-click:hover { filter: brightness(1.08); }
+.funnel-cap { font-size: 86%; color: #444; margin-top: 2px; }
+.funnel-cap .funnel-pct { color: #888; font-size: 92%; }
+.funnel-stale { opacity: 0.45; }
 </style>
 </head>
 <body>
@@ -1517,610 +1531,593 @@ function showClientIds() {
   $('#clientIdsModal').modal('show');
 }
 
-/* ── Capture Analysis ── */
-function showCaptureAnalysis() {
-  var createOrderRe = /^\/v2\/checkout\/orders$/;
-  var captureOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)\/capture$/;
-  var getOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)$/;
-  var authorizeOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)\/authorize$/;
-  var authCaptureRe = /^\/v2\/payments\/authorizations\/([^\/]+)\/capture$/;
+/* ════════════════════════════════════════════════════════════════════════
+ * Capture / Drop-off analysis — shared order model
+ *
+ * Orders v2 status enums used here:
+ *   Order status      : CREATED, SAVED, PAYER_ACTION_REQUIRED  = awaiting buyer
+ *                       APPROVED                                = buyer approved
+ *                       COMPLETED                               = captured / done
+ *   Authorization txn : CREATED (held = success), PENDING, DENIED, EXPIRED,
+ *                       VOIDED, CAPTURED, PARTIALLY_CAPTURED
+ *   Capture txn       : COMPLETED, PENDING, DECLINED, DENIED, FAILED
+ *
+ * NOTE: only purchase_units[0] and the first capture/authorization are inspected.
+ * Multi-purchase-unit orders and partial captures are out of scope — see
+ * reference/capture-logic.md. PENDING is kept as its own terminal state; we do
+ * NOT try to resolve it to COMPLETED/DENIED (the log has no webhook data).
+ * ════════════════════════════════════════════════════════════════════════ */
 
-  /* Build lookup: order ID → payment_source from order records */
-  var orderPaymentSource = {};
-  tableItems.forEach(function(row) {
-    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
-    var url = row.url || '';
-    if (method !== 'GET' && method !== 'POST') return;
-
-    var orderId = null;
-    /* GET/POST /v2/checkout/orders/{id} — order ID is in the URL */
-    var m = url.match(getOrderRe);
-    if (m) orderId = m[1];
-    /* POST /v2/checkout/orders/{id}/authorize — order ID is in the URL */
-    if (!orderId) { var ma = url.match(authorizeOrderRe); if (ma) orderId = ma[1]; }
-    /* POST /v2/checkout/orders — order ID is in the response body */
-    if (!orderId && createOrderRe.test(url) && method === 'POST') {
-      try { orderId = row.api_response.body.id; } catch(e) {}
-    }
-
-    if (!orderId || orderPaymentSource[orderId]) return;
-    try {
-      var ps = row.api_response.body.payment_source;
-      if (ps) orderPaymentSource[orderId] = Object.keys(ps)[0];
-    } catch(e) {}
-  });
-
-  /* Build lookup: authorization ID → order ID from authorize records */
-  var authToOrder = {};
-  tableItems.forEach(function(row) {
-    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
-    if (method !== 'POST') return;
-    var m = (row.url || '').match(authorizeOrderRe);
-    if (!m) return;
-    var orderId = m[1];
-    try {
-      var authId = row.api_response.body.purchase_units[0].payments.authorizations[0].id;
-      if (authId) authToOrder[authId] = orderId;
-    } catch(e) {}
-  });
-
-  /* Count order creations (POST /v2/checkout/orders -> 2xx) */
-  var totalOrderCreates = 0;
-  tableItems.forEach(function(row) {
-    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
-    if (method !== 'POST') return;
-    if (!createOrderRe.test(row.url || '')) return;
-    var httpStatus = parseInt(row.http_status || (row.api_response && row.api_response.status));
-    if (httpStatus >= 200 && httpStatus < 300) totalOrderCreates++;
-  });
-
-  var records = [];
-
-  tableItems.forEach(function(row) {
-    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
-    if (method !== 'POST') return;
-
-    var url = row.url || '';
-    var isCreate = createOrderRe.test(url);
-    var captureMatch = url.match(captureOrderRe);
-    var isCapture = !!captureMatch;
-    var authCaptureMatch = url.match(authCaptureRe);
-    var isAuthCapture = !!authCaptureMatch;
-    var authorizeMatch = url.match(authorizeOrderRe);
-    var isAuthorize = !!authorizeMatch;
-    if (!isCreate && !isCapture && !isAuthCapture && !isAuthorize) return;
-
-    var httpStatus = parseInt(row.http_status || (row.api_response && row.api_response.status));
-    var body = (row.api_response && row.api_response.body) || {};
-
-    /* Try to get capture/authorize status */
-    var captureStatus = null;
-    if (isAuthCapture) {
-      /* Auth-capture: status is at body top level */
-      captureStatus = body.status || null;
-    } else if (isAuthorize) {
-      /* Authorize: check authorization status or treat HTTP error as failure */
-      try { captureStatus = body.purchase_units[0].payments.authorizations[0].status; } catch(e) {}
-    } else {
-      try { captureStatus = body.purchase_units[0].payments.captures[0].status; } catch(e) {}
-    }
-
-    /* For order-create URLs, only include if captures data exists or if error */
-    if (isCreate && !captureStatus && httpStatus >= 200 && httpStatus < 400) return;
-    /* For authorize URLs, only include failures (successes are intermediate, not final) */
-    if (isAuthorize && httpStatus >= 200 && httpStatus < 400 && captureStatus !== 'DENIED') return;
-
-    /* Resolve order ID for per-order tracking */
-    var orderId = null;
-    if (isCapture && captureMatch[1]) orderId = captureMatch[1];
-    else if (isAuthCapture && authCaptureMatch[1]) orderId = authToOrder[authCaptureMatch[1]] || null;
-    else if (isAuthorize && authorizeMatch[1]) orderId = authorizeMatch[1];
-    else if (isCreate) { try { orderId = body.id; } catch(e) {} }
-
-    /* Get payment source type from response, fallback to request body */
-    var paymentSource = null;
-    try {
-      var ps = body.payment_source;
-      if (ps) paymentSource = Object.keys(ps)[0];
-    } catch(e) {}
-    if (!paymentSource) {
-      try {
-        var reqPs = row.api_request.body.payment_source;
-        if (reqPs) paymentSource = Object.keys(reqPs)[0];
-      } catch(e) {}
-    }
-    /* Fallback: look up payment source from related order record */
-    if (!paymentSource && isCapture && captureMatch[1]) {
-      paymentSource = orderPaymentSource[captureMatch[1]] || null;
-    }
-    if (!paymentSource && (isAuthCapture || isAuthorize) && orderId) {
-      paymentSource = orderPaymentSource[orderId] || null;
-    }
-
-    /* Determine outcome */
-    var outcome;
-    if (httpStatus >= 400) outcome = 'failed';
-    else if (captureStatus === 'COMPLETED') outcome = 'completed';
-    else if (captureStatus === 'PENDING') outcome = 'pending';
-    else if (captureStatus === 'DECLINED' || captureStatus === 'DENIED') outcome = 'failed';
-    else return;
-
-    records.push({
-      row: row,
-      paymentSource: paymentSource || '(unknown)',
-      outcome: outcome,
-      orderId: orderId,
-      type: isCreate ? 'create' : (isAuthorize ? 'authorize' : (isAuthCapture ? 'auth-capture' : 'capture'))
-    });
-  });
-
-  if (!records.length) {
-    $('#captureAnalysisContent').html('<div class="alert alert-success mb-0">No capture transactions found in the loaded data.</div>');
-    $('#captureAnalysisModal').modal('show');
-    return;
-  }
-
-  /* Separate known vs unknown payment source records */
-  var knownRecords = [];
-  var unknownRecords = [];
-  records.forEach(function(rec) {
-    if (rec.paymentSource === '(unknown)') unknownRecords.push(rec);
-    else knownRecords.push(rec);
-  });
-
-  /* Group known records by payment source */
-  var sourceMap = {};
-  var totals = { completed: 0, pending: 0, failed: 0, total: 0 };
-
-  knownRecords.forEach(function(rec) {
-    var src = rec.paymentSource;
-    if (!sourceMap[src]) sourceMap[src] = { completed: 0, pending: 0, failed: 0, total: 0, completedRecords: [], pendingRecords: [], failedRecords: [] };
-    sourceMap[src][rec.outcome]++;
-    sourceMap[src].total++;
-    sourceMap[src][rec.outcome + 'Records'].push(rec.row);
-    totals[rec.outcome]++;
-    totals.total++;
-  });
-
-  /* Sort by total descending */
-  var sources = Object.keys(sourceMap).sort(function(a, b) {
-    return sourceMap[b].total - sourceMap[a].total;
-  });
-
-  /* Group unknown records by error issue */
-  var unknownIssueMap = {};  /* issue -> { count, records: [] } */
-  unknownRecords.forEach(function(rec) {
-    var issue = '(no details)';
-    try {
-      var body = rec.row.api_response.body;
-      var details = body.details || [];
-      if (details.length && details[0].issue) issue = details[0].issue;
-      else if (body.name) issue = body.name;
-    } catch(e) {}
-    if (!unknownIssueMap[issue]) unknownIssueMap[issue] = { count: 0, records: [] };
-    unknownIssueMap[issue].count++;
-    unknownIssueMap[issue].records.push(rec.row);
-  });
-  var unknownIssues = Object.keys(unknownIssueMap).sort(function(a, b) {
-    return unknownIssueMap[b].count - unknownIssueMap[a].count;
-  });
-
-  /* Failed capture reasons (all failed records, known + unknown) */
-  var failIssueMap = {};  /* issue -> { count, records: [] } */
-  records.forEach(function(rec) {
-    if (rec.outcome !== 'failed') return;
-    var issue = '(no details)';
-    try {
-      var body = rec.row.api_response.body;
-      var details = body.details || [];
-      if (details.length && details[0].issue) issue = details[0].issue;
-      else if (body.name) issue = body.name;
-    } catch(e) {}
-    if (!failIssueMap[issue]) failIssueMap[issue] = { count: 0, records: [] };
-    failIssueMap[issue].count++;
-    failIssueMap[issue].records.push(rec.row);
-  });
-  var failIssues = Object.keys(failIssueMap).sort(function(a, b) {
-    return failIssueMap[b].count - failIssueMap[a].count;
-  });
-
-  /* Per-order outcome tracking: find orders with both failed and completed */
-  var orderOutcomeSet = {};  /* orderId -> Set-like { failed: bool, completed: bool } */
-  var orderFailSuccessRecords = [];
-  records.forEach(function(rec) {
-    if (!rec.orderId) return;
-    if (!orderOutcomeSet[rec.orderId]) orderOutcomeSet[rec.orderId] = { failed: false, completed: false, records: [] };
-    if (rec.outcome === 'failed') orderOutcomeSet[rec.orderId].failed = true;
-    if (rec.outcome === 'completed') orderOutcomeSet[rec.orderId].completed = true;
-    orderOutcomeSet[rec.orderId].records.push(rec.row);
-  });
-  var failedAlsoSucceeded = 0;
-  Object.keys(orderOutcomeSet).forEach(function(oid) {
-    var o = orderOutcomeSet[oid];
-    if (o.failed && o.completed) {
-      failedAlsoSucceeded++;
-      orderFailSuccessRecords = orderFailSuccessRecords.concat(o.records);
-    }
-  });
-
-  /* Build slice data for pie chart */
-  var captureSliceData = [];
-
-  /* Build HTML */
-  var knownCount = knownRecords.length;
-
-  function pct(count, total) {
-    if (!count || !total) return '';
-    return ' <span class="text-muted" style="font-size:80%;">' + ((count / total) * 100).toFixed(0) + '%</span>';
-  }
-
-  function drillCell(count, total, src, outcome, colorClass, colorStyle) {
-    if (!count) return '<span class="text-muted">0</span>';
-    var esc = src.replace(/"/g, '&quot;');
-    var style = 'text-decoration:none; cursor:pointer;' + (colorStyle ? ' color:' + colorStyle + ';' : '');
-    var cls = 'capture-drill font-weight-bold' + (colorClass ? ' ' + colorClass : '');
-    return '<a href="javascript:void(0);" class="' + cls + '" data-source="' + esc + '" data-outcome="' + outcome + '" style="' + style + '">' + count + '</a>' + pct(count, total);
-  }
-
-  /* Summary lines */
-  var html = '<p class="mb-1" style="font-size:93%;">';
-  html += '<span class="fa fa-shopping-cart text-muted" style="margin-right:3px;"></span> ';
-  html += 'Orders created (<code>POST /v2/checkout/orders</code> &rarr; 2xx): <strong>' + totalOrderCreates + '</strong>';
-  if (failedAlsoSucceeded > 0) {
-    html += ' &nbsp;|&nbsp; <span class="fa fa-refresh" style="color:#17a2b8; margin-right:3px;"></span>';
-    html += 'Orders with failed capture but also succeeded: ';
-    html += '<a href="javascript:void(0);" class="fail-also-success-drill font-weight-bold" style="text-decoration:none; color:#17a2b8;">' + failedAlsoSucceeded + '</a>';
-  }
-  html += '</p>';
-
-  /* Payment source table */
-  html += '<p class="mb-2 mt-2"><strong>' + knownCount + '</strong> capture transaction(s) across <strong>' + sources.length + '</strong> payment source(s)' + (unknownRecords.length ? ' <span class="text-muted" style="font-size:85%;">(' + unknownRecords.length + ' with unknown source excluded)</span>' : '') + ':</p>';
-  html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
-  html += '<div style="flex:1; min-width:0;">';
-  html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%;">';
-  html += '<thead class="thead-light"><tr>';
-  html += '<th>Payment Source</th>';
-  html += '<th style="text-align:center; width:90px;">Completed</th>';
-  html += '<th style="text-align:center; width:90px;">Pending</th>';
-  html += '<th style="text-align:center; width:90px;">Failed</th>';
-  html += '<th style="text-align:center; width:70px;">Total</th>';
-  html += '</tr></thead><tbody>';
-
-  sources.forEach(function(src, idx) {
-    var s = sourceMap[src];
-    var sliceColor = PIE_COLORS[idx % PIE_COLORS.length];
-    captureSliceData.push({ label: src, value: s.total, color: sliceColor });
-    html += '<tr data-slice-index="' + idx + '">';
-    html += '<td><span style="display:inline-block;width:10px;height:10px;background:' + sliceColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span><code style="font-size:12px;">' + src + '</code></td>';
-    html += '<td style="text-align:center;">' + drillCell(s.completed, s.total, src, 'completed', 'text-success') + '</td>';
-    html += '<td style="text-align:center;">' + drillCell(s.pending, s.total, src, 'pending', '', '#e6a800') + '</td>';
-    html += '<td style="text-align:center;">' + drillCell(s.failed, s.total, src, 'failed', 'text-danger') + '</td>';
-    html += '<td style="text-align:center;"><strong>' + s.total + '</strong></td>';
-    html += '</tr>';
-  });
-
-  /* Totals row */
-  html += '<tr class="table-secondary font-weight-bold">';
-  html += '<td>Total</td>';
-  html += '<td style="text-align:center;" class="text-success">' + totals.completed + pct(totals.completed, totals.total) + '</td>';
-  html += '<td style="text-align:center; color:#e6a800;">' + totals.pending + pct(totals.pending, totals.total) + '</td>';
-  html += '<td style="text-align:center;" class="text-danger">' + totals.failed + pct(totals.failed, totals.total) + '</td>';
-  html += '<td style="text-align:center;">' + totals.total + '</td>';
-  html += '</tr>';
-
-  html += '</tbody></table>';
-  html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a count to view those records in a new window.</p>';
-  html += '</div>';
-  html += '<div style="flex:0 0 220px; position:sticky; top:0;"><canvas id="pieChart_capture" width="220" height="220"></canvas></div>';
-  html += '</div>';
-
-  /* Failed capture reasons table */
-  if (failIssues.length) {
-    var totalFailed = totals.failed + unknownRecords.filter(function(r) { return r.outcome === 'failed'; }).length;
-    html += '<hr style="margin:14px 0 10px;">';
-    html += '<p class="mb-2"><span class="fa fa-exclamation-circle text-danger" style="margin-right:3px;"></span> <strong>' + totalFailed + '</strong> capture failure(s) by error reason:</p>';
-    html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:93%; max-width:600px;">';
-    html += '<thead class="thead-light"><tr><th>Error Issue</th><th style="text-align:center; width:70px;">Count</th></tr></thead><tbody>';
-
-    failIssues.forEach(function(issue) {
-      var entry = failIssueMap[issue];
-      html += '<tr class="fail-issue-row" style="cursor:pointer;" data-issue="' + issue.replace(/"/g,'&quot;') + '">';
-      html += '<td><code style="font-size:12px;">' + issue + '</code></td>';
-      html += '<td style="text-align:center;"><span class="font-weight-bold text-danger">' + entry.count + '</span></td>';
-      html += '</tr>';
-    });
-
-    html += '</tbody></table>';
-    html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a row to view those records in a new window.</p>';
-  }
-
-  $('#captureAnalysisContent').html(html);
-
-  renderPieChart({ canvasId: 'pieChart_capture', $container: $('#captureAnalysisContent'), slices: captureSliceData });
-
-  /* Drill-down click handler for known payment sources */
-  $('#captureAnalysisContent').on('click', '.capture-drill', function() {
-    var src = $(this).data('source');
-    var outcome = $(this).data('outcome');
-    var recs = sourceMap[src] ? sourceMap[src][outcome + 'Records'] : [];
-    if (!recs.length) return;
-    var labels = { completed: 'Completed', pending: 'Pending', failed: 'Failed' };
-    openFilteredWindow(recs, labels[outcome] + ' Captures: ' + src);
-  });
-
-  /* Drill-down click handler for failed issue rows */
-  $('#captureAnalysisContent').on('click', '.fail-issue-row', function() {
-    var issue = $(this).data('issue');
-    var recs = failIssueMap[issue] ? failIssueMap[issue].records : [];
-    if (!recs.length) return;
-    openFilteredWindow(recs, 'Failed Captures: ' + issue);
-  });
-
-  /* Drill-down click handler for fail-also-success link */
-  $('#captureAnalysisContent').on('click', '.fail-also-success-drill', function() {
-    if (!orderFailSuccessRecords.length) return;
-    openFilteredWindow(orderFailSuccessRecords, 'Orders with Failed + Successful Capture');
-  });
-
-  /* CSV export handler */
-  $('#btnExportCaptureCsv').off('click').on('click', function() {
-    var csvRows = [];
-    sources.forEach(function(src) {
-      var s = sourceMap[src];
-      csvRows.push([src, s.completed, s.pending, s.failed, s.total]);
-    });
-    var headers = ['Payment Source', 'Completed', 'Pending', 'Failed', 'Total'];
-    if (failIssues.length) {
-      csvRows.push([]);
-      csvRows.push(['Error Issue', 'Count']);
-      failIssues.forEach(function(issue) {
-        csvRows.push([issue, failIssueMap[issue].count]);
-      });
-    }
-    downloadCsv('capture_analysis.csv', headers, csvRows);
-  });
-
-  $('#captureAnalysisModal').modal('show');
+/* First capture/authorization status / id inside a purchase_units body */
+function _puFirst(body, kind, prop) {
+  try { return body.purchase_units[0].payments[kind][0][prop]; } catch (e) { return null; }
 }
 
-/* ── Drop-off Analysis ── */
-function showDropOff() {
-  var captureOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)\/capture$/;
-  var authorizeOrderRe = /^\/v2\/checkout\/orders\/([^\/]+)\/authorize$/;
+/* { src, vaulted } from a request/response body's payment_source, or null */
+function _psLabel(body) {
+  if (!body || !body.payment_source) return null;
+  var k = Object.keys(body.payment_source)[0];
+  if (!k) return null;
+  var inner = body.payment_source[k] || {};
+  var vaulted = !!(inner.vault_id || (inner.attributes && inner.attributes.vault));
+  return { src: k, vaulted: vaulted };
+}
+
+/* Map a capture call (http + capture status) to an outcome */
+function _captureOutcome(httpStatus, status) {
+  if (httpStatus >= 200 && httpStatus < 300) {
+    if (status === 'COMPLETED' || status === 'CAPTURED' || status === 'PARTIALLY_CAPTURED') return 'completed';
+    if (status === 'PENDING') return 'pending';
+    if (status === 'DECLINED' || status === 'DENIED' || status === 'FAILED') return 'declined';
+    return 'completed'; /* 2xx capture object with an unusual status */
+  }
+  if (httpStatus === 422) return 'declined';
+  return 'error';
+}
+
+/* Map an authorize call (http + authorization status) to an outcome */
+function _authorizeOutcome(httpStatus, status) {
+  if (httpStatus >= 200 && httpStatus < 300) {
+    if (status === 'CREATED' || status === 'CAPTURED' || status === 'PARTIALLY_CAPTURED') return 'authorized';
+    if (status === 'PENDING') return 'pending';
+    if (status === 'DENIED' || status === 'EXPIRED' || status === 'VOIDED') return 'declined';
+    return 'authorized'; /* 2xx authorization object with an unusual status */
+  }
+  if (httpStatus === 422) return 'declined';
+  return 'error';
+}
+
+var _CAP_RANK  = { completed: 4, pending: 3, declined: 2, error: 1 };
+var _AUTH_RANK = { authorized: 4, pending: 3, declined: 2, error: 1 };
+
+/* Build a per-order model from tableItems. Returns:
+ *   { orders: {orderId -> model}, createErrorsNoId: [rows], orphanAuthCaptures: [{row,outcome}] } */
+function buildOrderModel() {
+  var createRe      = /^\/v2\/checkout\/orders$/;
+  var getOrderRe    = /^\/v2\/checkout\/orders\/([^\/]+)$/;
+  var captureRe     = /^\/v2\/checkout\/orders\/([^\/]+)\/capture$/;
+  var authorizeRe   = /^\/v2\/checkout\/orders\/([^\/]+)\/authorize$/;
   var authCaptureRe = /^\/v2\/payments\/authorizations\/([^\/]+)\/capture$/;
 
-  /* Build lookup: authorization ID → order ID from authorize records */
+  var orders = {};
   var authToOrder = {};
+  var createErrorsNoId = [];
+  var orphanAuthCaptures = [];
+
+  function getOrder(id) {
+    if (!orders[id]) orders[id] = {
+      id: id, intent: null, paymentSource: null, vaulted: false,
+      created: false, createError: false, createStatus: null,
+      orderStatus: null, approved: false,
+      capture: null, authorize: null, authCapture: null,
+      records: { create: null, gets: [], captures: [], authorizes: [], authCaptures: [] }
+    };
+    return orders[id];
+  }
+
+  /* Keep the best outcome seen for a field (completed > pending > declined > error) */
+  function rankSet(o, field, outcome, row, ranks) {
+    if (!o[field]) { o[field] = { outcome: outcome }; return; }
+    if (ranks[outcome] > ranks[o[field].outcome]) o[field].outcome = outcome;
+  }
+
+  function applyStatus(o, body) {
+    if (body && body.status) {
+      o.orderStatus = body.status;
+      if (body.status === 'APPROVED' || body.status === 'COMPLETED') o.approved = true;
+    }
+  }
+  function applyPaymentSource(o, body) {
+    if (o.paymentSource) return;
+    var ps = _psLabel(body);
+    if (ps) { o.paymentSource = ps.src; o.vaulted = ps.vaulted; }
+  }
+
+  /* Pass 1: creates, GETs, captures, authorizes */
   tableItems.forEach(function(row) {
     var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
-    if (method !== 'POST') return;
-    var m = (row.url || '').match(authorizeOrderRe);
-    if (!m) return;
-    var orderId = m[1];
-    try {
-      var authId = row.api_response.body.purchase_units[0].payments.authorizations[0].id;
-      if (authId) authToOrder[authId] = orderId;
-    } catch(e) {}
-  });
-
-  /* Build per-order capture outcome: best result wins (completed > pending > failed) */
-  /* orderOutcome[orderId] = { outcome: 'completed'|'pending'|'failed', records: [...] } */
-  var orderOutcome = {};
-  /* Build per-order authorize outcome */
-  /* orderAuthOutcome[orderId] = { outcome: 'auth_completed'|'auth_declined'|'auth_failed', records: [...] } */
-  var orderAuthOutcome = {};
-
-  tableItems.forEach(function(row) {
-    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
-    if (method !== 'POST') return;
     var url = row.url || '';
-
-    var orderId = null;
-    var captureStatus = null;
-    var authStatus = null;
-    var isAuth = false;
     var httpStatus = parseInt(row.http_status || (row.api_response && row.api_response.status));
+    var reqBody = (row.api_request && row.api_request.body) || {};
+    var resBody = (row.api_response && row.api_response.body) || {};
 
-    /* Explicit capture call */
-    var m = url.match(captureOrderRe);
-    if (m) {
-      orderId = m[1];
-      try { captureStatus = row.api_response.body.purchase_units[0].payments.captures[0].status; } catch(e) {}
-    }
+    /* POST /v2/checkout/orders — create */
+    if (method === 'POST' && createRe.test(url)) {
+      var oid = null;
+      try { oid = resBody.id; } catch (e) {}
+      var success = httpStatus >= 200 && httpStatus < 300;
+      if (!oid) { if (!success) createErrorsNoId.push(row); return; }
 
-    /* Explicit authorize call */
-    if (!orderId) {
-      var ma = url.match(authorizeOrderRe);
-      if (ma) {
-        orderId = ma[1];
-        isAuth = true;
-        try { authStatus = row.api_response.body.purchase_units[0].payments.authorizations[0].status; } catch(e) {}
+      var o = getOrder(oid);
+      o.created = true;
+      o.createStatus = httpStatus;
+      o.createError = !success;
+      o.records.create = row;
+      o.intent = reqBody.intent || resBody.intent || o.intent;
+      applyPaymentSource(o, reqBody);
+      applyPaymentSource(o, resBody);
+      applyStatus(o, resBody);
+
+      /* Inline outcome on create (card / vaulted-paypal capture or authorize inline) */
+      var capSt = _puFirst(resBody, 'captures', 'status');
+      if (capSt) { rankSet(o, 'capture', _captureOutcome(httpStatus, capSt), row, _CAP_RANK); o.records.captures.push(row); }
+      var authSt = _puFirst(resBody, 'authorizations', 'status');
+      if (authSt) {
+        rankSet(o, 'authorize', _authorizeOutcome(httpStatus, authSt), row, _AUTH_RANK);
+        o.records.authorizes.push(row);
+        var aidc = _puFirst(resBody, 'authorizations', 'id'); if (aidc) authToOrder[aidc] = oid;
       }
+      return;
     }
 
-    /* Auth-capture: POST /v2/payments/authorizations/{authId}/capture */
-    if (!orderId) {
-      var mac = url.match(authCaptureRe);
-      if (mac) {
-        var authId = mac[1];
-        orderId = authToOrder[authId] || null;
-        captureStatus = (row.api_response && row.api_response.body && row.api_response.body.status) || null;
-      }
-    }
-
-    /* Inline capture: POST /v2/checkout/orders with captures in response */
-    if (!orderId && url === '/v2/checkout/orders') {
-      try {
-        var cap = row.api_response.body.purchase_units[0].payments.captures[0];
-        if (cap) {
-          orderId = row.api_response.body.id;
-          captureStatus = cap.status;
+    /* GET /v2/checkout/orders/{id} — refresh order status (approval detection) */
+    if (method === 'GET') {
+      var mg = url.match(getOrderRe);
+      if (mg) {
+        var og = getOrder(mg[1]);
+        og.records.gets.push(row);
+        applyStatus(og, resBody);
+        applyPaymentSource(og, resBody);
+        if (!og.intent && resBody.intent) og.intent = resBody.intent;
+        var gCap = _puFirst(resBody, 'captures', 'status');
+        if (gCap) rankSet(og, 'capture', _captureOutcome(200, gCap), row, _CAP_RANK);
+        var gAuth = _puFirst(resBody, 'authorizations', 'status');
+        if (gAuth) {
+          rankSet(og, 'authorize', _authorizeOutcome(200, gAuth), row, _AUTH_RANK);
+          var aidg = _puFirst(resBody, 'authorizations', 'id'); if (aidg) authToOrder[aidg] = mg[1];
         }
-      } catch(e) {}
+        return;
+      }
     }
 
-    if (!orderId) return;
+    if (method !== 'POST') return;
 
-    if (isAuth) {
-      /* Determine authorize outcome */
-      var outcome;
-      if (httpStatus >= 400) outcome = 'auth_failed';
-      else if (authStatus === 'DENIED') outcome = 'auth_declined';
-      else if (authStatus) outcome = 'auth_completed';
-      else return;
+    /* POST /v2/checkout/orders/{id}/capture */
+    var mc = url.match(captureRe);
+    if (mc) {
+      var oc = getOrder(mc[1]);
+      oc.records.captures.push(row);
+      rankSet(oc, 'capture', _captureOutcome(httpStatus, _puFirst(resBody, 'captures', 'status')), row, _CAP_RANK);
+      applyPaymentSource(oc, resBody);
+      return;
+    }
 
-      if (!orderAuthOutcome[orderId]) orderAuthOutcome[orderId] = { outcome: outcome, records: [row] };
-      else {
-        orderAuthOutcome[orderId].records.push(row);
-        /* Upgrade: auth_completed > auth_declined > auth_failed */
-        var cur = orderAuthOutcome[orderId].outcome;
-        if (outcome === 'auth_completed' || (outcome === 'auth_declined' && cur === 'auth_failed')) {
-          orderAuthOutcome[orderId].outcome = outcome;
-        }
-      }
-    } else {
-      /* Determine capture outcome */
-      var outcome;
-      if (httpStatus >= 400) outcome = 'failed';
-      else if (captureStatus === 'COMPLETED') outcome = 'completed';
-      else if (captureStatus === 'PENDING') outcome = 'pending';
-      else if (captureStatus === 'DECLINED' || captureStatus === 'DENIED') outcome = 'failed';
-      else return;
-
-      if (!orderOutcome[orderId]) orderOutcome[orderId] = { outcome: outcome, records: [row] };
-      else {
-        orderOutcome[orderId].records.push(row);
-        /* Upgrade outcome: completed > pending > failed */
-        var cur = orderOutcome[orderId].outcome;
-        if (outcome === 'completed' || (outcome === 'pending' && cur === 'failed')) {
-          orderOutcome[orderId].outcome = outcome;
-        }
-      }
+    /* POST /v2/checkout/orders/{id}/authorize */
+    var maz = url.match(authorizeRe);
+    if (maz) {
+      var oa = getOrder(maz[1]);
+      oa.records.authorizes.push(row);
+      rankSet(oa, 'authorize', _authorizeOutcome(httpStatus, _puFirst(resBody, 'authorizations', 'status')), row, _AUTH_RANK);
+      var aid = _puFirst(resBody, 'authorizations', 'id'); if (aid) authToOrder[aid] = maz[1];
+      applyPaymentSource(oa, resBody);
+      return;
     }
   });
 
-  /* Scan order creations and classify each */
-  var totalCreates = 0;
-  var buckets = {
-    completed:      { count: 0, orders: [] },
-    pending:        { count: 0, orders: [] },
-    failed:         { count: 0, orders: [] },
-    auth_completed: { count: 0, orders: [] },
-    auth_declined:  { count: 0, orders: [] },
-    auth_failed:    { count: 0, orders: [] },
-    none:           { count: 0, orders: [] }
-  };
-
+  /* Pass 2: auth-captures (needs authToOrder fully populated) */
   tableItems.forEach(function(row) {
     var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
     if (method !== 'POST') return;
-    if (row.url !== '/v2/checkout/orders') return;
-
+    var m = (row.url || '').match(authCaptureRe);
+    if (!m) return;
     var httpStatus = parseInt(row.http_status || (row.api_response && row.api_response.status));
-    if (httpStatus < 200 || httpStatus >= 300) return;
-
-    totalCreates++;
-
-    var orderId = null;
-    try { orderId = row.api_response.body.id; } catch(e) {}
-
-    /* Cumulative funnel: count an order in every stage it reached */
-    var classified = false;
-    if (orderId && orderOutcome[orderId]) {
-      var bucket = orderOutcome[orderId].outcome;
-      buckets[bucket].count++;
-      buckets[bucket].orders.push(row);
-      classified = true;
-    }
-    if (orderId && orderAuthOutcome[orderId]) {
-      var bucket = orderAuthOutcome[orderId].outcome;
-      buckets[bucket].count++;
-      buckets[bucket].orders.push(row);
-      classified = true;
-    }
-    if (!classified) {
-      buckets.none.count++;
-      buckets.none.orders.push(row);
+    var resBody = (row.api_response && row.api_response.body) || {};
+    var outcome = _captureOutcome(httpStatus, resBody.status || null);
+    var oid = authToOrder[m[1]] || null;
+    if (oid && orders[oid]) {
+      var o = orders[oid];
+      o.records.authCaptures.push(row);
+      rankSet(o, 'authCapture', outcome, row, _CAP_RANK);
+    } else {
+      orphanAuthCaptures.push({ row: row, outcome: outcome });
     }
   });
+
+  return { orders: orders, createErrorsNoId: createErrorsNoId, orphanAuthCaptures: orphanAuthCaptures };
+}
+
+/* Display label for a payment source, with vaulted/interactive distinction */
+function psDisplay(o) {
+  if (!o.paymentSource) return '(unknown)';
+  return o.paymentSource + (o.vaulted ? ' (vaulted)' : '');
+}
+
+/* Effective intent: declared, else inferred from which calls were made */
+function orderIntent(o) {
+  if (o.intent === 'AUTHORIZE' || o.intent === 'CAPTURE') return o.intent;
+  if (o.authorize || o.records.authorizes.length) return 'AUTHORIZE';
+  return 'CAPTURE';
+}
+
+/* ── Funnel renderer (CSS proportional centered bars) ──
+ * stages: [{ key, label, icon, count, color, records }]
+ * Returns HTML; caller wires clicks via `.funnel-bar[data-key]`. */
+function funnelHtml(stages, total) {
+  var max = 0;
+  stages.forEach(function(s) { if (s.count > max) max = s.count; });
+  var html = '<div class="funnel-wrap">';
+  stages.forEach(function(s) {
+    var pctTotal = total ? (s.count / total * 100) : 0;
+    var w = max ? (s.count / max * 100) : 0;
+    if (s.count > 0 && w < 7) w = 7;            /* keep tiny bars visible */
+    var clickable = s.count > 0;
+    var barCls = 'funnel-bar' + (clickable ? ' funnel-click' : ' funnel-stale');
+    html += '<div class="funnel-row">';
+    html += '<div class="' + barCls + '" data-key="' + s.key + '" style="width:' + w.toFixed(1) + '%; background:' + s.color + ';">' + s.count + '</div>';
+    html += '<div class="funnel-cap">' + (s.icon || '') + ' ' + s.label +
+            ' <span class="funnel-pct">(' + pctTotal.toFixed(1) + '%)</span></div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * Drop-off Analysis — per-intent funnels
+ * ════════════════════════════════════════════════════════════════════════ */
+function showDropOff() {
+  var model = buildOrderModel();
+  var orders = model.orders;
+
+  /* Capture-intent buckets (mutually exclusive per created order) */
+  var cap = { total: 0, completed: [], pending: [], failed: [], approvedNotCaptured: [], abandoned: [] };
+  /* Authorize-intent buckets */
+  var auth = { total: 0, captured: [], capturePending: [], captureFailed: [],
+               authorizedNotCaptured: [], authPending: [], authFailed: [],
+               approvedNotActioned: [], abandoned: [] };
+  var createErrors = model.createErrorsNoId.slice();
+
+  Object.keys(orders).forEach(function(oid) {
+    var o = orders[oid];
+    if (!o.created) return;                       /* skip orphan capture/authorize w/o create */
+    if (o.createError) { if (o.records.create) createErrors.push(o.records.create); return; }
+
+    if (orderIntent(o) === 'AUTHORIZE') {
+      auth.total++;
+      var ao = o.authorize && o.authorize.outcome;
+      if (ao === 'authorized') {
+        var co = o.authCapture && o.authCapture.outcome;
+        if (co === 'completed') auth.captured.push(o.records.create);
+        else if (co === 'pending') auth.capturePending.push(o.records.create);
+        else if (co === 'declined' || co === 'error') auth.captureFailed.push(o.records.create);
+        else auth.authorizedNotCaptured.push(o.records.create);
+      } else if (ao === 'pending') auth.authPending.push(o.records.create);
+      else if (ao === 'declined' || ao === 'error') auth.authFailed.push(o.records.create);
+      else if (o.approved) auth.approvedNotActioned.push(o.records.create);
+      else auth.abandoned.push(o.records.create);
+    } else {
+      cap.total++;
+      var oc = o.capture && o.capture.outcome;
+      if (!oc && o.orderStatus === 'COMPLETED') oc = 'completed';   /* captured, just not logged */
+      if (oc === 'completed') cap.completed.push(o.records.create);
+      else if (oc === 'pending') cap.pending.push(o.records.create);
+      else if (oc === 'declined' || oc === 'error') cap.failed.push(o.records.create);
+      else if (o.approved) cap.approvedNotCaptured.push(o.records.create);
+      else cap.abandoned.push(o.records.create);
+    }
+  });
+
+  var drill = {};   /* key -> records */
+  function reg(key, recs) { drill[key] = recs; return key; }
 
   var html = '';
-  if (!totalCreates) {
-    html = '<div class="alert alert-success mb-0">No <code>POST /v2/checkout/orders</code> requests found in the loaded data.</div>';
+
+  /* Header: create errors (merchant-introduced) */
+  if (createErrors.length) {
+    reg('createErrors', createErrors);
+    html += '<div class="alert alert-warning py-2 px-3 mb-3" style="font-size:92%;">' +
+      '<span class="fa fa-exclamation-triangle"></span> <strong>' + createErrors.length + '</strong> ' +
+      'order-create call(s) failed (non-2xx) before any order existed &mdash; typically a merchant-side error. ' +
+      '<a href="javascript:void(0);" class="dropoff-drill" data-key="createErrors" style="font-weight:bold;">view</a></div>';
+  }
+
+  if (!cap.total && !auth.total) {
+    html += '<div class="alert alert-success mb-0">No successful <code>POST /v2/checkout/orders</code> requests found in the loaded data.</div>';
     $('#dropOffContent').html(html);
     $('#dropOffModal').modal('show');
     return;
   }
 
-  function pct(n) { return ((n / totalCreates) * 100).toFixed(1); }
-  function drillLink(count, id, color) {
-    if (!count) return '<strong class="text-muted">0</strong>';
-    return '<a href="javascript:void(0);" class="dropoff-drill font-weight-bold" data-bucket="' + id + '" style="color:' + color + '; text-decoration:none;">' + count + '</a>';
+  /* ── intent:CAPTURE funnel ── */
+  if (cap.total) {
+    var capStages = [
+      { key: reg('cap_completed', cap.completed), label: 'Capture completed', icon: '<span class="fa fa-check"></span>', count: cap.completed.length, color: '#28a745' },
+      { key: reg('cap_pending', cap.pending), label: 'Capture pending', icon: '<span class="fa fa-clock-o"></span>', count: cap.pending.length, color: '#e6a800' },
+      { key: reg('cap_failed', cap.failed), label: 'Capture failed (declined / error)', icon: '<span class="fa fa-times"></span>', count: cap.failed.length, color: '#dc3545' },
+      { key: reg('cap_anc', cap.approvedNotCaptured), label: 'Approved, not captured — merchant drop-off', icon: '<span class="fa fa-user-times"></span>', count: cap.approvedNotCaptured.length, color: '#b07aa1' },
+      { key: reg('cap_abandon', cap.abandoned), label: 'No capture seen — buyer abandon / uncaptured', icon: '<span class="fa fa-sign-out"></span>', count: cap.abandoned.length, color: '#6c757d' }
+    ];
+    html += '<h6 class="mb-1"><span class="fa fa-shopping-cart text-muted"></span> intent:CAPTURE &mdash; <strong>' + cap.total + '</strong> order(s) created</h6>';
+    html += '<p class="text-muted mb-1" style="font-size:85%;">Each created order falls into exactly one bucket. Click a bar to view those create records.</p>';
+    html += funnelHtml(capStages, cap.total);
   }
 
-  /* Semantic colors for drop-off slices */
-  var dropoffSemanticColors = {
-    completed: '#28a745', pending: '#e6a800', failed: '#dc3545',
-    auth_completed: '#17a2b8', auth_declined: '#fd7e14', auth_failed: '#6f42c1',
-    none: '#6c757d'
-  };
-  var dropoffSliceData = [];
-  var dropoffSliceMeta = [
-    { key: 'completed', label: 'Capture completed', icon: '<span class="fa fa-check text-success"></span>' },
-    { key: 'pending', label: 'Capture pending', icon: '<span class="fa fa-clock-o" style="color:#e6a800;"></span>' },
-    { key: 'failed', label: 'Capture failed', icon: '<span class="fa fa-times text-danger"></span>' },
-    { key: 'auth_completed', label: 'Authorize completed', icon: '<span class="fa fa-lock" style="color:#17a2b8;"></span>' },
-    { key: 'auth_declined', label: 'Authorize declined', icon: '<span class="fa fa-ban" style="color:#fd7e14;"></span>' },
-    { key: 'auth_failed', label: 'Authorize failed', icon: '<span class="fa fa-times" style="color:#6f42c1;"></span>' },
-    { key: 'none', label: 'Drop-off (no capture/authorize)', icon: '<span class="fa fa-sign-out" style="color:#6c757d;"></span>' }
-  ];
-
-  html += '<p class="mb-3">Of <strong>' + totalCreates + '</strong> successful order creation(s) (<code>POST /v2/checkout/orders</code> &rarr; 2xx), cumulative funnel &mdash; an order may count in multiple stages:</p>';
-  html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
-  html += '<div style="flex:1; min-width:0;">';
-  html += '<table class="table table-sm table-bordered mb-0" style="font-size:93%;">';
-  html += '<tbody>';
-
-  var dropoffSliceIdx = 0;
-  dropoffSliceMeta.forEach(function(meta) {
-    var count = buckets[meta.key].count;
-    var semColor = dropoffSemanticColors[meta.key];
-    if (count > 0) {
-      dropoffSliceData.push({ label: meta.label, value: count, color: semColor });
-      html += '<tr data-slice-index="' + dropoffSliceIdx + '">';
-      html += '<td><span style="display:inline-block;width:10px;height:10px;background:' + semColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span>' + meta.icon + ' ' + meta.label + '</td>';
-      html += '<td style="text-align:center; width:130px;">' + drillLink(count, meta.key, semColor) + ' <span class="text-muted" style="font-size:80%;">' + pct(count) + '%</span></td></tr>';
-      dropoffSliceIdx++;
-    } else {
-      html += '<tr>';
-      html += '<td><span style="display:inline-block;width:10px;height:10px;background:' + semColor + ';margin-right:5px;vertical-align:middle;border-radius:1px;opacity:0.3;"></span>' + meta.icon + ' ' + meta.label + '</td>';
-      html += '<td style="text-align:center; width:130px;"><strong class="text-muted">0</strong> <span class="text-muted" style="font-size:80%;">' + pct(0) + '%</span></td></tr>';
-    }
-  });
-
-  html += '</tbody></table>';
-  html += '<p class="text-muted mt-2 mb-0" style="font-size:85%;">Click a count to view those order creation records in a new window.</p>';
-  html += '</div>';
-  html += '<div style="flex:0 0 220px; position:sticky; top:0;"><canvas id="pieChart_dropoff" width="220" height="220"></canvas></div>';
-  html += '</div>';
+  /* ── intent:AUTHORIZE funnel ── */
+  if (auth.total) {
+    var authStages = [
+      { key: reg('auth_captured', auth.captured), label: 'Authorized & captured', icon: '<span class="fa fa-check"></span>', count: auth.captured.length, color: '#28a745' },
+      { key: reg('auth_capPending', auth.capturePending), label: 'Authorized, capture pending', icon: '<span class="fa fa-clock-o"></span>', count: auth.capturePending.length, color: '#86bcb6' },
+      { key: reg('auth_capFailed', auth.captureFailed), label: 'Authorized, capture failed', icon: '<span class="fa fa-times"></span>', count: auth.captureFailed.length, color: '#ff9da7' },
+      { key: reg('auth_notCap', auth.authorizedNotCaptured), label: 'Authorized, not captured — drop-off', icon: '<span class="fa fa-hourglass-half"></span>', count: auth.authorizedNotCaptured.length, color: '#17a2b8' },
+      { key: reg('auth_pending', auth.authPending), label: 'Authorize pending', icon: '<span class="fa fa-clock-o"></span>', count: auth.authPending.length, color: '#e6a800' },
+      { key: reg('auth_failed', auth.authFailed), label: 'Authorize declined / failed', icon: '<span class="fa fa-ban"></span>', count: auth.authFailed.length, color: '#dc3545' },
+      { key: reg('auth_appNot', auth.approvedNotActioned), label: 'Approved, not authorized — merchant drop-off', icon: '<span class="fa fa-user-times"></span>', count: auth.approvedNotActioned.length, color: '#b07aa1' },
+      { key: reg('auth_abandon', auth.abandoned), label: 'No authorize seen — buyer abandon', icon: '<span class="fa fa-sign-out"></span>', count: auth.abandoned.length, color: '#6c757d' }
+    ];
+    html += (cap.total ? '<hr style="margin:16px 0 12px;">' : '');
+    html += '<h6 class="mb-1"><span class="fa fa-lock text-muted"></span> intent:AUTHORIZE &mdash; <strong>' + auth.total + '</strong> order(s) created</h6>';
+    html += '<p class="text-muted mb-1" style="font-size:85%;">Click a bar to view those create records.</p>';
+    html += funnelHtml(authStages, auth.total);
+  }
 
   $('#dropOffContent').html(html);
 
-  renderPieChart({ canvasId: 'pieChart_dropoff', $container: $('#dropOffContent'), slices: dropoffSliceData });
-
-  $('#dropOffContent').on('click', '.dropoff-drill', function() {
-    var bucket = $(this).data('bucket');
-    var recs = buckets[bucket] ? buckets[bucket].orders : [];
-    if (!recs.length) return;
-    var labels = {
-      completed: 'Capture Completed', pending: 'Capture Pending', failed: 'Capture Failed',
-      auth_completed: 'Authorize Completed', auth_declined: 'Authorize Declined', auth_failed: 'Authorize Failed',
-      none: 'Drop-off (No Capture/Authorize)'
-    };
-    openFilteredWindow(recs, 'Orders: ' + labels[bucket]);
+  $('#dropOffContent').off('click', '.dropoff-drill').on('click', '.dropoff-drill', function() {
+    var recs = drill[$(this).data('key')] || [];
+    if (recs.length) openFilteredWindow(recs, 'Drop-off: ' + $(this).data('key'));
+  });
+  $('#dropOffContent').off('click', '.funnel-bar.funnel-click').on('click', '.funnel-bar.funnel-click', function() {
+    var recs = drill[$(this).data('key')] || [];
+    if (recs.length) openFilteredWindow(recs, 'Drop-off bucket');
   });
 
   $('#dropOffModal').modal('show');
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * Capture Analysis — acceptance (auth-rate) by payment source
+ * ════════════════════════════════════════════════════════════════════════ */
+function showCaptureAnalysis() {
+  var model = buildOrderModel();
+  var orders = model.orders;
+
+  /* Collect per-order items for each section: { ps, outcome, recs } */
+  var capItems = [];    /* intent:CAPTURE — capture acceptance */
+  var authItems = [];   /* intent:AUTHORIZE — authorize acceptance */
+  var acItems = [];     /* intent:AUTHORIZE — authorization -> capture */
+
+  Object.keys(orders).forEach(function(oid) {
+    var o = orders[oid];
+    var ps = psDisplay(o);
+    var intent = orderIntent(o);
+    if (intent === 'CAPTURE') {
+      if (o.capture) capItems.push({ ps: ps, outcome: o.capture.outcome,
+        recs: o.records.captures.length ? o.records.captures : (o.records.create ? [o.records.create] : []) });
+    } else {
+      if (o.authorize) authItems.push({ ps: ps, outcome: o.authorize.outcome,
+        recs: o.records.authorizes.length ? o.records.authorizes : (o.records.create ? [o.records.create] : []) });
+      if (o.authCapture) acItems.push({ ps: ps, outcome: o.authCapture.outcome, recs: o.records.authCaptures });
+    }
+  });
+  /* Orphan auth-captures (authorize call not in dataset) */
+  model.orphanAuthCaptures.forEach(function(x) {
+    acItems.push({ ps: '(unknown)', outcome: x.outcome, recs: [x.row] });
+  });
+
+  if (!capItems.length && !authItems.length && !acItems.length) {
+    $('#captureAnalysisContent').html('<div class="alert alert-success mb-0">No capture or authorize transactions found in the loaded data.</div>');
+    $('#captureAnalysisModal').modal('show');
+    return;
+  }
+
+  var drill = {};
+  var sectionIdx = 0;
+
+  /* Aggregate items by payment source into outcome counts + drill records */
+  function aggregate(items, keys) {
+    var map = {}, totals = { total: 0 };
+    keys.forEach(function(k) { totals[k] = 0; });
+    items.forEach(function(it) {
+      if (!map[it.ps]) { map[it.ps] = { total: 0 }; keys.forEach(function(k) { map[it.ps][k] = 0; map[it.ps][k + 'R'] = []; }); }
+      var oc = map[it.ps][it.outcome] !== undefined ? it.outcome : 'error';
+      map[it.ps][oc]++; map[it.ps].total++;
+      map[it.ps][oc + 'R'] = map[it.ps][oc + 'R'].concat(it.recs);
+      totals[oc]++; totals.total++;
+    });
+    return { map: map, totals: totals };
+  }
+
+  /* Render one acceptance section (table + per-source doughnut + rate line) */
+  function renderSection(opts) {
+    /* opts: title, icon, items, keys[], labels{}, colors{}, rateText(totals)->string */
+    var agg = aggregate(opts.items, opts.keys);
+    var sources = Object.keys(agg.map).sort(function(a, b) { return agg.map[b].total - agg.map[a].total; });
+    var sIdx = sectionIdx++;
+    var canvasId = 'pieChart_sec' + sIdx;
+    var sliceData = [];
+
+    function pct(c, t) { return (!c || !t) ? '' : ' <span class="text-muted" style="font-size:80%;">' + ((c / t) * 100).toFixed(0) + '%</span>'; }
+    function cell(c, t, key) {
+      if (!c) return '<span class="text-muted">0</span>';
+      return '<a href="javascript:void(0);" class="cap-drill font-weight-bold" data-key="' + key + '" style="text-decoration:none;">' + c + '</a>' + pct(c, t);
+    }
+
+    var h = '<h6 class="mb-1">' + opts.icon + ' ' + opts.title + '</h6>';
+    h += '<p class="mb-2" style="font-size:90%;">' + opts.rateText(agg.totals) + '</p>';
+    h += '<div style="display:flex; gap:20px; align-items:flex-start;">';
+    h += '<div style="flex:1; min-width:0;">';
+    h += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:92%;"><thead class="thead-light"><tr>';
+    h += '<th>Payment Source</th>';
+    opts.keys.forEach(function(k) { h += '<th style="text-align:center; width:84px;">' + opts.labels[k] + '</th>'; });
+    h += '<th style="text-align:center; width:64px;">Total</th></tr></thead><tbody>';
+
+    sources.forEach(function(src, i) {
+      var s = agg.map[src];
+      var color = PIE_COLORS[i % PIE_COLORS.length];
+      sliceData.push({ label: src, value: s.total, color: color });
+      h += '<tr data-slice-index="' + i + '">';
+      h += '<td><span style="display:inline-block;width:10px;height:10px;background:' + color + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span><code style="font-size:12px;">' + src + '</code></td>';
+      opts.keys.forEach(function(k) {
+        var dk = 'sec' + sIdx + '|' + src + '|' + k;
+        drill[dk] = s[k + 'R'];
+        h += '<td style="text-align:center; color:' + opts.colors[k] + ';">' + cell(s[k], s.total, dk) + '</td>';
+      });
+      h += '<td style="text-align:center;"><strong>' + s.total + '</strong></td></tr>';
+    });
+
+    h += '<tr class="table-secondary font-weight-bold"><td>Total</td>';
+    opts.keys.forEach(function(k) { h += '<td style="text-align:center; color:' + opts.colors[k] + ';">' + agg.totals[k] + pct(agg.totals[k], agg.totals.total) + '</td>'; });
+    h += '<td style="text-align:center;">' + agg.totals.total + '</td></tr>';
+    h += '</tbody></table>';
+    h += '<p class="text-muted mt-1 mb-0" style="font-size:84%;">Click a count to view those records in a new window.</p>';
+    h += '</div>';
+    h += '<div style="flex:0 0 200px; position:sticky; top:0;"><canvas id="' + canvasId + '" width="200" height="200"></canvas></div>';
+    h += '</div>';
+
+    return { html: h, canvasId: canvasId, slices: sliceData };
+  }
+
+  var capKeys  = ['completed', 'pending', 'declined', 'error'];
+  var capLabels = { completed: 'Completed', pending: 'Pending', declined: 'Declined', error: 'Error' };
+  var capColors = { completed: '#28a745', pending: '#e6a800', declined: '#dc3545', error: '#8b1a1a' };
+
+  var authKeys = ['authorized', 'pending', 'declined', 'error'];
+  var authLabels = { authorized: 'Authorized', pending: 'Pending', declined: 'Declined', error: 'Error' };
+  var authColors = { authorized: '#28a745', pending: '#e6a800', declined: '#dc3545', error: '#8b1a1a' };
+
+  function captureRate(t) {
+    var ar = t.total ? (t.completed / t.total * 100).toFixed(1) : '0.0';
+    var ia = (t.completed + t.declined) ? (t.completed / (t.completed + t.declined) * 100).toFixed(1) : 'n/a';
+    return '<strong>Auth-rate</strong> (Completed / all attempts) = <strong>' + ar + '%</strong> &nbsp;|&nbsp; ' +
+           'Issuer approval (Completed / Completed+Declined) = <strong>' + (ia === 'n/a' ? ia : ia + '%') + '</strong> ' +
+           '<span class="text-muted" style="font-size:85%;">(Pending shown separately; Error = technical/integration)</span>';
+  }
+  function authorizeRate(t) {
+    var ar = t.total ? (t.authorized / t.total * 100).toFixed(1) : '0.0';
+    var ia = (t.authorized + t.declined) ? (t.authorized / (t.authorized + t.declined) * 100).toFixed(1) : 'n/a';
+    return '<strong>Auth-rate</strong> (Authorized / all attempts) = <strong>' + ar + '%</strong> &nbsp;|&nbsp; ' +
+           'Issuer approval (Authorized / Authorized+Declined) = <strong>' + (ia === 'n/a' ? ia : ia + '%') + '</strong>';
+  }
+  function acRate(t) {
+    var ar = t.total ? (t.completed / t.total * 100).toFixed(1) : '0.0';
+    return 'Of <strong>' + t.total + '</strong> authorization(s) captured: <strong>' + ar + '%</strong> Completed ' +
+           '<span class="text-muted" style="font-size:85%;">(Pending / Declined / Error separated)</span>';
+  }
+
+  var pendingCharts = [];
+  var html = '';
+
+  if (capItems.length) {
+    var secA = renderSection({ title: 'intent:CAPTURE — capture acceptance', icon: '<span class="fa fa-credit-card text-success"></span>',
+      items: capItems, keys: capKeys, labels: capLabels, colors: capColors, rateText: captureRate });
+    html += secA.html;
+    pendingCharts.push(secA);
+  }
+  if (authItems.length) {
+    var secB = renderSection({ title: 'intent:AUTHORIZE — authorize acceptance', icon: '<span class="fa fa-lock" style="color:#17a2b8;"></span>',
+      items: authItems, keys: authKeys, labels: authLabels, colors: authColors, rateText: authorizeRate });
+    html += (html ? '<hr style="margin:16px 0 12px;">' : '') + secB.html;
+    pendingCharts.push(secB);
+  }
+  if (acItems.length) {
+    var secC = renderSection({ title: 'Authorization → Capture', icon: '<span class="fa fa-arrow-right" style="color:#b07aa1;"></span>',
+      items: acItems, keys: capKeys, labels: capLabels, colors: capColors, rateText: acRate });
+    html += (html ? '<hr style="margin:16px 0 12px;">' : '') + secC.html;
+    pendingCharts.push(secC);
+  }
+
+  /* ── Failure breakdown: Declined (issuer/risk) vs Error (technical/integration) ── */
+  var declinedMap = {}, errorMap = {};
+  function classifyFail(row) {
+    var hs = parseInt(row.http_status || (row.api_response && row.api_response.status));
+    var body = (row.api_response && row.api_response.body) || {};
+    var st = body.status || _puFirst(body, 'captures', 'status') || _puFirst(body, 'authorizations', 'status');
+    var isDeclined = (hs === 422) || st === 'DECLINED' || st === 'DENIED';
+    if (hs >= 200 && hs < 300 && !isDeclined) return;           /* success */
+    var issue = '(no details)';
+    try { var d = body.details || []; if (d.length && d[0].issue) issue = d[0].issue; else if (body.name) issue = body.name; } catch (e) {}
+    if (issue === '(no details)' && st) issue = st;
+    var target = isDeclined ? declinedMap : errorMap;
+    var label = isDeclined ? issue : (issue + ' (HTTP ' + (hs || '?') + ')');
+    if (!target[label]) target[label] = { count: 0, records: [] };
+    target[label].count++; target[label].records.push(row);
+  }
+  Object.keys(orders).forEach(function(oid) {
+    var o = orders[oid];
+    o.records.captures.forEach(classifyFail);
+    o.records.authorizes.forEach(classifyFail);
+    o.records.authCaptures.forEach(classifyFail);
+  });
+  model.orphanAuthCaptures.forEach(function(x) { classifyFail(x.row); });
+
+  function failTable(map, title, headColor, drillPrefix) {
+    var keys = Object.keys(map).sort(function(a, b) { return map[b].count - map[a].count; });
+    if (!keys.length) return '';
+    var total = keys.reduce(function(a, k) { return a + map[k].count; }, 0);
+    var h = '<p class="mb-2"><span class="fa fa-exclamation-circle" style="color:' + headColor + ';"></span> <strong>' + total + '</strong> ' + title + ':</p>';
+    h += '<table class="table table-sm table-bordered table-striped mb-3" style="font-size:92%; max-width:640px;"><thead class="thead-light"><tr><th>Reason</th><th style="text-align:center; width:70px;">Count</th></tr></thead><tbody>';
+    keys.forEach(function(k) {
+      var dk = drillPrefix + '|' + k;
+      drill[dk] = map[k].records;
+      h += '<tr class="cap-drill" style="cursor:pointer;" data-key="' + dk + '"><td><code style="font-size:12px;">' + k.replace(/</g, '&lt;') + '</code></td>';
+      h += '<td style="text-align:center;"><span class="font-weight-bold" style="color:' + headColor + ';">' + map[k].count + '</span></td></tr>';
+    });
+    h += '</tbody></table>';
+    return h;
+  }
+
+  var failHtml = failTable(declinedMap, 'declined by issuer / risk (by reason)', '#dc3545', 'decl') +
+                 failTable(errorMap, 'technical / integration error(s) (by reason)', '#8b1a1a', 'err');
+  if (failHtml) html += '<hr style="margin:16px 0 12px;">' + failHtml;
+
+  $('#captureAnalysisContent').html(html);
+
+  pendingCharts.forEach(function(sec) {
+    renderPieChart({ canvasId: sec.canvasId, $container: $('#captureAnalysisContent'), slices: sec.slices });
+  });
+
+  $('#captureAnalysisContent').off('click', '.cap-drill').on('click', '.cap-drill', function() {
+    var recs = drill[$(this).data('key')] || [];
+    if (recs.length) openFilteredWindow(recs, 'Capture Analysis');
+  });
+
+  /* CSV export: one block per section + failure reasons */
+  $('#btnExportCaptureCsv').off('click').on('click', function() {
+    var rows = [];
+    function pushSection(name, items, keys, labels) {
+      if (!items.length) return;
+      var agg = aggregate(items, keys);
+      rows.push([name]);
+      rows.push(['Payment Source'].concat(keys.map(function(k) { return labels[k]; })).concat(['Total']));
+      Object.keys(agg.map).sort(function(a, b) { return agg.map[b].total - agg.map[a].total; }).forEach(function(src) {
+        var s = agg.map[src];
+        rows.push([src].concat(keys.map(function(k) { return s[k]; })).concat([s.total]));
+      });
+      rows.push([]);
+    }
+    pushSection('intent:CAPTURE - capture acceptance', capItems, capKeys, capLabels);
+    pushSection('intent:AUTHORIZE - authorize acceptance', authItems, authKeys, authLabels);
+    pushSection('Authorization -> Capture', acItems, capKeys, capLabels);
+    var dKeys = Object.keys(declinedMap), eKeys = Object.keys(errorMap);
+    if (dKeys.length || eKeys.length) {
+      rows.push(['Failure reason', 'Type', 'Count']);
+      dKeys.forEach(function(k) { rows.push([k, 'declined', declinedMap[k].count]); });
+      eKeys.forEach(function(k) { rows.push([k, 'error', errorMap[k].count]); });
+    }
+    downloadCsv('capture_analysis.csv', [], rows);
+  });
+
+  $('#captureAnalysisModal').modal('show');
 }
 
 /* ── External URLs ── */
