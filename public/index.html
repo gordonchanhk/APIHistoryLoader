@@ -179,6 +179,7 @@ tr.pie-highlight {
     <button type="button" class="btn btn-sm btn-outline-info" id="btnClientIds"><span class="fa fa-id-card-o"></span> Client IDs</button>
     <button type="button" class="btn btn-sm btn-outline-success" id="btnCaptureAnalysis"><span class="fa fa-credit-card"></span> Capture Analysis</button>
     <button type="button" class="btn btn-sm btn-outline-warning" id="btnDropOff"><span class="fa fa-sign-out"></span> Drop-off</button>
+    <button type="button" class="btn btn-sm btn-outline-dark" id="btnApiHealth"><span class="fa fa-heartbeat"></span> API Health</button>
     <button type="button" class="btn btn-sm btn-outline-secondary" id="btnExternalUrls"><span class="fa fa-external-link"></span> External URLs</button>
     <span id="exclude-section">
       <span class="text-muted" style="font-size:90%; margin-right:2px;">Exclude:</span>
@@ -246,6 +247,25 @@ tr.pie-highlight {
       </div>
       <div class="modal-footer" style="padding:6px 10px;">
         <button type="button" class="btn btn-sm btn-outline-info" id="btnExportEndpointCsv"><span class="fa fa-download"></span> Export CSV</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- API Health Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="apiHealthModal">
+  <div class="modal-dialog" style="max-width:1050px !important; top:40px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" style="margin:0;"><span class="fa fa-heartbeat text-dark"></span> API Health</h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 200px); background-color:#fff;">
+        <div id="apiHealthContent"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-info" id="btnExportApiHealthCsv"><span class="fa fa-download"></span> Export CSV</button>
         <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
       </div>
     </div>
@@ -1563,6 +1583,30 @@ function _psLabel(body) {
   return { src: k, vaulted: vaulted };
 }
 
+/* Processor decline code for card / wallet (card, google_pay, apple_pay) declines.
+ * Lives on captures[0].processor_response.response_code (orders capture), or at the
+ * body top level for auth-captures. Usually a 4-char code (e.g. 5120, 9500, PPAX).
+ * PayPal (vault) success declines won't carry one, so presence implies a card rail. */
+function _declineCode(body) {
+  if (!body) return null;
+  var pr = _puFirst(body, 'captures', 'processor_response') || body.processor_response;
+  return (pr && pr.response_code) ? pr.response_code : null;
+}
+
+/* Best-effort human labels for common PayPal processor response codes. Unknown
+ * codes are shown bare (no guessing). See PayPal "Processor response codes" docs. */
+var PROCESSOR_RESPONSE_CODES = {
+  '0000': 'Approved', '00N7': 'CVV2 failure', '0500': 'Do not honor',
+  '0R00': 'Customer cancelled', '5100': 'Generic decline', '5120': 'Insufficient funds',
+  '5180': 'Invalid or restricted card', '5400': 'Expired card', '5650': 'Declined due to risk',
+  '9100': 'Declined by issuer', '9500': 'Suspected fraud', '9510': 'Suspected fraud (risk)',
+  '9520': 'Lost or stolen card'
+};
+function processorCodeLabel(code) {
+  var d = PROCESSOR_RESPONSE_CODES[code];
+  return d ? (code + ' — ' + d) : code;
+}
+
 /* Map a capture call (http + capture status) to an outcome */
 function _captureOutcome(httpStatus, status) {
   if (httpStatus >= 200 && httpStatus < 300) {
@@ -2041,15 +2085,27 @@ function showCaptureAnalysis() {
   function classifyFail(row) {
     var hs = parseInt(row.http_status || (row.api_response && row.api_response.status));
     var body = (row.api_response && row.api_response.body) || {};
-    var st = body.status || _puFirst(body, 'captures', 'status') || _puFirst(body, 'authorizations', 'status');
+    /* Prefer the capture/authorization status over the order-level body.status,
+     * which otherwise shadows an inline DECLINED capture on a 2xx create response. */
+    var st = _puFirst(body, 'captures', 'status') || _puFirst(body, 'authorizations', 'status') || body.status;
     var isDeclined = (hs === 422) || st === 'DECLINED' || st === 'DENIED';
     if (hs >= 200 && hs < 300 && !isDeclined) return;           /* success */
     var issue = '(no details)';
     try { var d = body.details || []; if (d.length && d[0].issue) issue = d[0].issue; else if (body.name) issue = body.name; } catch (e) {}
     if (issue === '(no details)' && st) issue = st;
+    /* Card / wallet declines (status DECLINED, 2xx) carry a processor response code
+     * instead of a details.issue — surface that code as the reason, like INSTRUMENT_DECLINED. */
+    var procCode = null;
+    if (isDeclined) {
+      var code = _declineCode(body);
+      if (code && (issue === 'DECLINED' || issue === 'DENIED' || issue === '(no details)')) {
+        issue = processorCodeLabel(code);
+        procCode = code;
+      }
+    }
     var target = isDeclined ? declinedMap : errorMap;
     var label = isDeclined ? issue : (issue + ' (HTTP ' + (hs || '?') + ')');
-    if (!target[label]) target[label] = { count: 0, records: [] };
+    if (!target[label]) target[label] = { count: 0, records: [], code: procCode };
     target[label].count++; target[label].records.push(row);
   }
   Object.keys(orders).forEach(function(oid) {
@@ -2069,7 +2125,15 @@ function showCaptureAnalysis() {
     keys.forEach(function(k) {
       var dk = drillPrefix + '|' + k;
       drill[dk] = map[k].records;
-      h += '<tr class="cap-drill" style="cursor:pointer;" data-key="' + dk + '"><td><code style="font-size:12px;">' + k.replace(/</g, '&lt;') + '</code></td>';
+      var reasonCell = '<code style="font-size:12px;">' + k.replace(/</g, '&lt;') + '</code>';
+      /* Processor response codes link to the external reference page */
+      if (map[k].code) {
+        reasonCell += ' <a href="http://ppjssdk-demo.herokuapp.com/misc/processor-response?q=' +
+          encodeURIComponent(map[k].code) + '" target="_blank" rel="noopener" onclick="event.stopPropagation();" ' +
+          'title="View processor response code details" style="font-size:12px; text-decoration:none;">' +
+          '<span class="fa fa-external-link"></span></a>';
+      }
+      h += '<tr class="cap-drill" style="cursor:pointer;" data-key="' + dk + '"><td>' + reasonCell + '</td>';
       h += '<td style="text-align:center;"><span class="font-weight-bold" style="color:' + headColor + ';">' + map[k].count + '</span></td></tr>';
     });
     h += '</tbody></table>';
@@ -2118,6 +2182,199 @@ function showCaptureAnalysis() {
   });
 
   $('#captureAnalysisModal').modal('show');
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * API Health — call-efficiency / polling anti-patterns
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/* Parse a resource { type, id, action } from a URL, or null.
+ * action === null means a read of the resource itself (GET detail / poll). */
+function parseResource(url) {
+  url = (url || '').split('?')[0];
+  var m;
+  m = url.match(/^\/v2\/checkout\/orders\/([^\/]+)(?:\/([a-z-]+))?$/i);
+  if (m) return { type: 'order', id: m[1], action: m[2] || null };
+  m = url.match(/^\/v2\/payments\/captures\/([^\/]+)(?:\/([a-z-]+))?$/i);
+  if (m) return { type: 'capture', id: m[1], action: m[2] || null };
+  m = url.match(/^\/v2\/payments\/authorizations\/([^\/]+)(?:\/([a-z-]+))?$/i);
+  if (m) return { type: 'authorization', id: m[1], action: m[2] || null };
+  m = url.match(/^\/v2\/payments\/refunds\/([^\/]+)$/);
+  if (m) return { type: 'refund', id: m[1], action: null };
+  m = url.match(/^\/v1\/billing\/subscriptions\/([^\/]+)(?:\/([a-z-]+))?$/i);
+  if (m) return { type: 'subscription', id: m[1], action: m[2] || null };
+  m = url.match(/^\/v3\/vault\/(?:payment-tokens|setup-tokens)\/([^\/]+)$/);
+  if (m) return { type: 'vault-token', id: m[1], action: null };
+  /* Generic fallback: last id-like segment (must contain a digit to avoid
+   * matching endpoint words like "transactions"). */
+  var segs = url.split('/').filter(Boolean);
+  var last = segs[segs.length - 1];
+  if (last && /[0-9]/.test(last) && /^[A-Za-z0-9_-]{10,}$/.test(last)) {
+    return { type: segs[segs.length - 2] || 'resource', id: last, action: null };
+  }
+  return null;
+}
+
+var TERMINAL_STATUS = {
+  capture:       ['COMPLETED', 'REFUNDED', 'PARTIALLY_REFUNDED', 'DECLINED', 'FAILED'],
+  authorization: ['CAPTURED', 'VOIDED', 'DENIED', 'EXPIRED', 'PARTIALLY_CAPTURED'],
+  order:         ['COMPLETED', 'VOIDED'],
+  refund:        ['COMPLETED', 'CANCELLED', 'FAILED']
+};
+function isTerminal(type, status) {
+  var set = TERMINAL_STATUS[type];
+  return !!(set && status && set.indexOf(status) !== -1);
+}
+
+function showApiHealth() {
+  var pollGroups = {};    /* type|id        -> GET reads of a resource */
+  var actionGroups = {};  /* type|id|action -> POST actions on a resource */
+  var totalCalls = 0, getCalls = 0, postCalls = 0;
+
+  tableItems.forEach(function(row) {
+    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
+    totalCalls++;
+    if (method === 'GET') getCalls++; else if (method === 'POST') postCalls++;
+    var res = parseResource(row.url || '');
+    if (!res) return;
+    var t = row.create_time || '';
+
+    if (method === 'GET' && !res.action) {
+      var k = res.type + '|' + res.id;
+      var g = pollGroups[k] || (pollGroups[k] = { type: res.type, id: res.id, count: 0, records: [], latestStatus: null, latestTime: '', firstTime: t, lastTime: t });
+      g.count++; g.records.push(row);
+      var st = null; try { st = row.api_response.body.status; } catch (e) {}
+      if (t >= g.latestTime) { g.latestTime = t; if (st) g.latestStatus = st; }
+      if (t && (!g.firstTime || t < g.firstTime)) g.firstTime = t;
+      if (t && t > g.lastTime) g.lastTime = t;
+    } else if (method === 'POST' && res.action) {
+      var ak = res.type + '|' + res.id + '|' + res.action;
+      var a = actionGroups[ak] || (actionGroups[ak] = { type: res.type, id: res.id, action: res.action, count: 0, records: [], outcomes: {} });
+      a.count++; a.records.push(row);
+      var hs = parseInt(row.http_status || (row.api_response && row.api_response.status));
+      var oc = (hs >= 200 && hs < 300) ? '2xx' : (hs || '?') + '';
+      a.outcomes[oc] = (a.outcomes[oc] || 0) + 1;
+    }
+  });
+
+  if (!totalCalls) {
+    $('#apiHealthContent').html('<div class="alert alert-success mb-0">No API calls loaded.</div>');
+    $('#apiHealthModal').modal('show');
+    return;
+  }
+
+  var pollArr = Object.keys(pollGroups).map(function(k) { return pollGroups[k]; });
+  var actionArr = Object.keys(actionGroups).map(function(k) { return actionGroups[k]; });
+  var totalPolls = pollArr.reduce(function(a, g) { return a + g.count; }, 0);
+  var redundantPolls = pollArr.reduce(function(a, g) { return a + (g.count - 1); }, 0);
+  var biggest = pollArr.reduce(function(m, g) { return g.count > (m ? m.count : 0) ? g : m; }, null);
+  var drill = {};
+
+  function timeSpan(g) {
+    if (!g.firstTime || !g.lastTime || g.firstTime === g.lastTime) return '—';
+    try {
+      var ms = new Date(g.lastTime) - new Date(g.firstTime);
+      return ms >= 3.6e6 ? (ms / 3.6e6).toFixed(1) + 'h' : Math.round(ms / 6e4) + 'm';
+    } catch (e) { return '—'; }
+  }
+
+  /* Static shell: summary + threshold input + a tables container we re-render */
+  var ratio = totalCalls ? redundantPolls / totalCalls : 0;
+  var sev = ratio > 0.5 ? 'alert-danger' : (ratio > 0.1 ? 'alert-warning' : 'alert-info');
+  var summary = '<div class="alert ' + sev + ' py-2 px-3 mb-3" style="font-size:92%;">' +
+    '<div><strong>' + totalCalls + '</strong> total calls &nbsp;|&nbsp; ' + getCalls + ' GET, ' + postCalls + ' POST</div>' +
+    '<div><strong>' + pollArr.length + '</strong> distinct resource(s) polled via GET across <strong>' + totalPolls + '</strong> read(s); ' +
+    '<strong>' + redundantPolls + '</strong> redundant poll(s) (<strong>' + (totalCalls ? (ratio * 100).toFixed(1) : '0.0') + '%</strong> of all calls)' +
+    (biggest ? ', biggest offender <code>' + biggest.id + '</code> &times;' + biggest.count : '') + '.</div></div>';
+  var thresholdRow = '<div class="mb-3" style="font-size:92%;">Flag resources called <strong>&ge;</strong> ' +
+    '<input type="number" id="apiHealthThreshold" value="5" min="1" style="width:72px;" class="form-control form-control-sm d-inline-block"> time(s).</div>';
+  $('#apiHealthContent').html(summary + thresholdRow + '<div id="apiHealthTables"></div>');
+
+  function renderTables(threshold) {
+    threshold = Math.max(1, parseInt(threshold) || 5);
+    drill = {};
+    var html = '';
+
+    /* (1)+(2) Excessive GET polling, with terminal-state flag */
+    var flaggedPolls = pollArr.filter(function(g) { return g.count >= threshold; }).sort(function(a, b) { return b.count - a.count; });
+    var terminalCount = 0, terminalCalls = 0;
+    pollArr.forEach(function(g) { if (isTerminal(g.type, g.latestStatus)) { terminalCount++; terminalCalls += g.count; } });
+
+    html += '<h6 class="mb-1"><span class="fa fa-repeat text-warning"></span> Excessive GET polling <span class="text-muted" style="font-size:85%;">(' + flaggedPolls.length + ' resource(s) &ge; ' + threshold + ')</span></h6>';
+    if (terminalCount) html += '<p class="mb-2" style="font-size:88%;"><span class="fa fa-exclamation-triangle text-danger"></span> <strong>' + terminalCount + '</strong> polled resource(s) were already in a <strong>terminal state</strong> yet fetched <strong>' + terminalCalls + '</strong> time(s) total &mdash; those reads can never change.</p>';
+    if (!flaggedPolls.length) {
+      html += '<p class="text-muted mb-3" style="font-size:88%;">None &mdash; no resource fetched &ge; ' + threshold + ' times.</p>';
+    } else {
+      html += '<table class="table table-sm table-bordered table-striped mb-1" style="font-size:91%;"><thead class="thead-light"><tr>' +
+        '<th>Type</th><th>Resource ID</th><th style="text-align:center; width:90px;">GET calls</th><th style="text-align:center; width:130px;">Latest status</th><th style="text-align:center; width:78px;">Terminal?</th><th style="text-align:center; width:80px;">Time span</th></tr></thead><tbody>';
+      flaggedPolls.forEach(function(g) {
+        var dk = 'poll|' + g.type + '|' + g.id; drill[dk] = g.records;
+        var term = isTerminal(g.type, g.latestStatus);
+        html += '<tr>' +
+          '<td><code style="font-size:12px;">' + g.type + '</code></td>' +
+          '<td><a href="javascript:void(0);" class="apihealth-drill" data-key="' + dk + '" style="font-family:monospace; font-size:12px; text-decoration:none;">' + g.id + '</a></td>' +
+          '<td style="text-align:center;"><strong' + (term ? ' class="text-danger"' : '') + '>' + g.count + '</strong></td>' +
+          '<td style="text-align:center; font-size:12px;">' + (g.latestStatus || '<span class="text-muted">—</span>') + '</td>' +
+          '<td style="text-align:center;">' + (term ? '<span class="fa fa-check text-danger"></span>' : '<span class="text-muted">—</span>') + '</td>' +
+          '<td style="text-align:center; font-size:12px;">' + timeSpan(g) + '</td></tr>';
+      });
+      html += '</tbody></table><p class="text-muted mb-3" style="font-size:84%;">Click a resource ID to view those records in a new window.</p>';
+    }
+
+    /* (3) POST retry / duplicate storms */
+    var flaggedActions = actionArr.filter(function(a) { return a.count >= threshold; }).sort(function(a, b) { return b.count - a.count; });
+    html += '<hr style="margin:8px 0 12px;">';
+    html += '<h6 class="mb-1"><span class="fa fa-refresh text-info"></span> POST retry / duplicate storms <span class="text-muted" style="font-size:85%;">(' + flaggedActions.length + ' action(s) &ge; ' + threshold + ')</span></h6>';
+    if (!flaggedActions.length) {
+      html += '<p class="text-muted mb-1" style="font-size:88%;">None &mdash; no action repeated &ge; ' + threshold + ' times on one resource.</p>';
+    } else {
+      html += '<table class="table table-sm table-bordered table-striped mb-1" style="font-size:91%;"><thead class="thead-light"><tr>' +
+        '<th>Action</th><th>Resource ID</th><th style="text-align:center; width:90px;">Attempts</th><th>Outcomes</th></tr></thead><tbody>';
+      flaggedActions.forEach(function(a) {
+        var dk = 'act|' + a.type + '|' + a.id + '|' + a.action; drill[dk] = a.records;
+        var oc = Object.keys(a.outcomes).map(function(k) { return k + ':' + a.outcomes[k]; }).join(', ');
+        html += '<tr>' +
+          '<td><code style="font-size:12px;">' + a.type + ' ' + a.action + '</code></td>' +
+          '<td><a href="javascript:void(0);" class="apihealth-drill" data-key="' + dk + '" style="font-family:monospace; font-size:12px; text-decoration:none;">' + a.id + '</a></td>' +
+          '<td style="text-align:center;"><strong>' + a.count + '</strong></td>' +
+          '<td style="font-size:12px;">' + oc + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '<p class="text-muted mb-0" style="font-size:84%;">Duplicate <em>create</em> attempts (no resource id in the path) are not detected here.</p>';
+
+    $('#apiHealthTables').html(html);
+  }
+
+  renderTables(5);
+
+  /* Live re-rank on threshold change (input is in the static shell, not re-rendered) */
+  $('#apiHealthContent').off('input change', '#apiHealthThreshold').on('input change', '#apiHealthThreshold', function() {
+    renderTables($(this).val());
+  });
+
+  $('#apiHealthContent').off('click', '.apihealth-drill').on('click', '.apihealth-drill', function() {
+    var recs = drill[$(this).data('key')] || [];
+    if (recs.length) openFilteredWindow(recs, 'API Health');
+  });
+
+  $('#btnExportApiHealthCsv').off('click').on('click', function() {
+    var rows = [];
+    rows.push(['Excessive GET polling']);
+    rows.push(['Type', 'Resource ID', 'GET calls', 'Latest status', 'Terminal', 'Time span']);
+    pollArr.slice().sort(function(a, b) { return b.count - a.count; }).forEach(function(g) {
+      rows.push([g.type, g.id, g.count, g.latestStatus || '', isTerminal(g.type, g.latestStatus) ? 'yes' : 'no', timeSpan(g)]);
+    });
+    rows.push([]);
+    rows.push(['POST retry / duplicate storms']);
+    rows.push(['Action', 'Resource ID', 'Attempts', 'Outcomes']);
+    actionArr.slice().sort(function(a, b) { return b.count - a.count; }).forEach(function(a) {
+      rows.push([a.type + ' ' + a.action, a.id, a.count, Object.keys(a.outcomes).map(function(k) { return k + ':' + a.outcomes[k]; }).join(' ')]);
+    });
+    downloadCsv('api_health.csv', [], rows);
+  });
+
+  $('#apiHealthModal').modal('show');
 }
 
 /* ── External URLs ── */
@@ -2425,6 +2682,7 @@ $(document).ready(function() {
   $('#btnClientIds').on('click', showClientIds);
   $('#btnCaptureAnalysis').on('click', showCaptureAnalysis);
   $('#btnDropOff').on('click', showDropOff);
+  $('#btnApiHealth').on('click', showApiHealth);
   $('#btnExternalUrls').on('click', showExternalUrls);
 
   /* Exclude filter events */

@@ -130,6 +130,21 @@ Below the sections, failures are grouped into two tables: **declined by issuer/r
 HTTP code). All counts drill through to the matching records; the whole view exports
 to CSV.
 
+**Card / wallet processor decline codes.** Card, `google_pay` and `apple_pay`
+declines come back as a 2xx response with capture status `DECLINED` and **no**
+`details.issue` — the real reason is the processor code at
+`purchase_units[0].payments.captures[0].processor_response.response_code` (e.g.
+`5120`, `9500`, or PayPal codes like `PPAX`). When present, that code is used as the
+decline reason in the *declined by issuer/risk* table, exactly like
+`INSTRUMENT_DECLINED`. A best-effort lookup adds a description for common codes
+(e.g. `5120 — Insufficient funds`); unknown codes are shown bare. Each processor
+code links to its reference page
+(`http://ppjssdk-demo.herokuapp.com/misc/processor-response?q={code}`, new tab).
+
+> Because these declines are 2xx responses, the capture/authorization status — not
+> the order-level `status` — is what determines a decline (the order status would
+> otherwise shadow an inline DECLINED capture on a create response).
+
 ---
 
 ## Out of scope / known limitations
