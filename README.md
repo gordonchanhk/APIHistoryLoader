@@ -33,7 +33,8 @@ Uses Node's built-in `--watch` flag (requires Node.js v18.11+) to automatically 
 
 1. On the landing page, click **Choose file(s)** to select one or more `.txt` or `.json` files.
 2. Each file must contain a JSON array of API call records (the format exported by the PayPal API History tool).
-3. If multiple files are selected, their arrays are merged into a single view.
+3. If multiple files are selected, their arrays are merged into a single view (records are deduplicated by `correlation_id`).
+4. Large exports are split by the bookmarklet into `partNofM` files (see below). Select **all parts together** in the file picker — they are read sequentially (one at a time, to keep memory bounded for 100+ MB parts) with a progress indicator, then merged.
 
 ### Data file format
 
@@ -148,7 +149,7 @@ Lists all distinct `client_id` values found in the loaded data:
 2. Click the bookmark -- a green **Load More** button and a blue **Export JSON** button appear in the summary bar
 3. Click **Load More** to fetch and append older records (button shows running total)
 4. When no more records exist, the button greys out
-5. Click **Export JSON** to save all loaded records as a `.txt` file for offline analysis
+5. Click **Export JSON** to save all loaded records as a `.txt` file for offline analysis. Datasets larger than 50,000 records are split into multiple `...-partNofM-...records.txt` files (each a standalone JSON array) to stay under the browser's max-string limit — open all parts together in the Local REST API Explorer.
 
 > The bookmarklet only works on the live PayPal domain (same-origin AJAX + session cookies). It cannot work from a locally saved HTML file.
 
