@@ -102,9 +102,9 @@ a:hover { color: currentColor; }
   background-color: #fff; padding: 4px 0;
   box-shadow: 0 4px 8px -2px rgba(0,0,0,0.15);
 }
-
+#tools-bar .btn { margin: 0; }
 /* Exclude filter */
-#exclude-section { display: inline-block; vertical-align: middle; margin-left: 18px; }
+#exclude-section { display: block; vertical-align: middle; margin: 6px 18px 6px 0; }
 #exclude-input { width: 180px; height: 28px; font-size: 85%; padding: 2px 6px; display: inline-block; vertical-align: middle; }
 #exclude-add-btn { height: 28px; padding: 2px 8px; font-size: 85%; vertical-align: middle; margin-left: 4px; }
 #exclude-pills { margin-top: 4px; min-height: 0; }
@@ -182,12 +182,14 @@ tr.pie-highlight {
     <button type="button" class="btn btn-sm btn-outline-warning" id="btnDropOff"><span class="fa fa-sign-out"></span> Drop-off</button>
     <button type="button" class="btn btn-sm btn-outline-dark" id="btnApiHealth"><span class="fa fa-heartbeat"></span> API Health</button>
     <button type="button" class="btn btn-sm btn-outline-secondary" id="btnExternalUrls"><span class="fa fa-external-link"></span> External URLs</button>
+    <button type="button" class="btn btn-sm btn-outline-primary" id="btnPayerInfo"><span class="fa fa-users"></span> Payer Info</button>
+    <button type="button" class="btn btn-sm btn-outline-danger" id="btnDisputes"><span class="fa fa-gavel"></span> Disputes</button>
     <span id="exclude-section">
       <span class="text-muted" style="font-size:90%; margin-right:2px;">Exclude:</span>
       <input type="text" id="exclude-input" class="form-control form-control-sm d-inline-block" placeholder="path or keyword">
       <button type="button" class="btn btn-sm btn-outline-secondary" id="exclude-add-btn">+ Add</button>
+      <span id="env-badge" style="margin-left:18px; font-size:85%; display:none;"></span>
     </span>
-    <span id="env-badge" style="margin-left:18px; font-size:85%; display:none;"></span>
     <div id="exclude-pills"></div>
   </blockquote>
   <div id="frmSearchResults"></div>
@@ -328,6 +330,45 @@ tr.pie-highlight {
   </div>
 </div>
 
+<!-- Payer Info Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="payerInfoModal">
+  <div class="modal-dialog" style="max-width:1050px !important; top:40px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" style="margin:0;"><span class="fa fa-users text-primary"></span> Payer Info</h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 200px); background-color:#fff;">
+        <div id="payerInfoContent"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-info" id="btnExportPayerCsv"><span class="fa fa-download"></span> Export CSV</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Disputes Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="disputesModal">
+  <div class="modal-dialog" style="max-width:1180px !important; top:30px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" style="margin:0;"><span class="fa fa-gavel text-danger"></span> Dispute Case Summary</h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 180px); background-color:#fff;">
+        <div id="disputesContent"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="btnDisputesNewWindow"><span class="fa fa-external-link"></span> Open in new window</button>
+        <button type="button" class="btn btn-sm btn-outline-info" id="btnExportDisputesCsv"><span class="fa fa-download"></span> Export CSV</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- External URLs Modal -->
 <div class="modal fade" tabindex="-1" role="dialog" id="externalUrlsModal">
   <div class="modal-dialog" style="max-width:1050px !important; top:40px;">
@@ -378,6 +419,15 @@ var PIE_COLORS = [
 ];
 var _pieCharts = {};
 
+/* Append a YYYYMMDD-HHmmss timestamp before the file extension, e.g.
+ * "payer_info.csv" -> "payer_info_20260624-143005.csv". Centralized here so
+ * every export carries the time it was generated. */
+function stampFilename(filename) {
+  var ts = moment().format('YYYYMMDD-HHmmss');
+  var dot = filename.lastIndexOf('.');
+  return dot === -1 ? filename + '_' + ts : filename.slice(0, dot) + '_' + ts + filename.slice(dot);
+}
+
 /* ── CSV download utility ── */
 function downloadCsv(filename, headers, rows) {
   function escCell(val) {
@@ -392,7 +442,7 @@ function downloadCsv(filename, headers, rows) {
   var blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = filename;
+  a.download = stampFilename(filename);
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -902,7 +952,26 @@ function renderTable(items) {
     else summary += secs + ' seconds';
   }
   if (excludedCount > 0) summary += ' (' + excludedCount + ' excluded)';
-  $('#summary-bar').html('<div class="alert alert-info" style="border-color:lightgrey; text-align:center; max-width:510px; margin:0 auto; margin-bottom:0;">' + summary + '</div>');
+
+  /* Account number(s) + client id(s) overview — usually one account, possibly several client ids */
+  var acctSet = {}, clientSet = {};
+  items.forEach(function(v) {
+    if (v.account_number && v.account_number !== 'xxxxxx') acctSet[v.account_number] = true;
+    if (v.client_id && v.client_id !== 'xxxxxx') clientSet[v.client_id] = true;
+  });
+  var accts = Object.keys(acctSet), clients = Object.keys(clientSet);
+  function idList(vals) {
+    return vals.map(function(v) {
+      var s = String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return '<code style="font-size:90%; user-select:all;">' + s + '</code>';
+    }).join(', ');
+  }
+  var overview = '';
+  if (accts.length) overview += '<div><strong>' + (accts.length > 1 ? 'Accounts' : 'Account') + ':</strong> ' + idList(accts) + '</div>';
+  if (clients.length) overview += '<div><strong>Client ID' + (clients.length > 1 ? 's (' + clients.length + ')' : '') + ':</strong> ' + idList(clients) + '</div>';
+  if (overview) overview = '<div style="font-size:85%; margin-top:6px; word-break:break-all; border-top:1px solid #dbe3ea; padding-top:6px;">' + overview + '</div>';
+
+  $('#summary-bar').html('<div class="alert alert-info" style="border-color:lightgrey; text-align:center; margin:0 auto; margin-bottom:0;">' + summary + overview + '</div>');
 
   /* Toolbar HTML */
   var has_multiple = (has_success && has_failure) || (has_success && has_error) || (has_failure && has_error);
@@ -2206,6 +2275,8 @@ function parseResource(url) {
   if (m) return { type: 'subscription', id: m[1], action: m[2] || null };
   m = url.match(/^\/v3\/vault\/(?:payment-tokens|setup-tokens)\/([^\/]+)$/);
   if (m) return { type: 'vault-token', id: m[1], action: null };
+  m = url.match(/^\/v1\/customer\/disputes\/([^\/]+)(?:\/([a-z-]+))?$/i);
+  if (m) return { type: 'dispute', id: m[1], action: m[2] || null };
   /* Generic fallback: last id-like segment (must contain a digit to avoid
    * matching endpoint words like "transactions"). */
   var segs = url.split('/').filter(Boolean);
@@ -2230,6 +2301,7 @@ function isTerminal(type, status) {
 function showApiHealth() {
   var pollGroups = {};    /* type|id        -> GET reads of a resource */
   var actionGroups = {};  /* type|id|action -> POST actions on a resource */
+  var disputeGroups = {}; /* dispute id     -> GET reads of a dispute case */
   var totalCalls = 0, getCalls = 0, postCalls = 0;
 
   tableItems.forEach(function(row) {
@@ -2239,6 +2311,16 @@ function showApiHealth() {
     var res = parseResource(row.url || '');
     if (!res) return;
     var t = row.create_time || '';
+
+    /* Dispute reads are expected to be polled repeatedly over time; they are
+     * NOT counted as generic polling. Only a re-read of the SAME dispute within
+     * 10 minutes is treated as unhealthy (handled separately below). */
+    if (method === 'GET' && !res.action && res.type === 'dispute') {
+      var dgk = res.id;
+      var dg = disputeGroups[dgk] || (disputeGroups[dgk] = { id: res.id, count: 0, records: [], times: [] });
+      dg.count++; dg.records.push(row); if (t) dg.times.push(t);
+      return;
+    }
 
     if (method === 'GET' && !res.action) {
       var k = res.type + '|' + res.id;
@@ -2266,6 +2348,27 @@ function showApiHealth() {
 
   var pollArr = Object.keys(pollGroups).map(function(k) { return pollGroups[k]; });
   var actionArr = Object.keys(actionGroups).map(function(k) { return actionGroups[k]; });
+
+  /* Dispute re-poll rule: same dispute id re-read within 10 minutes is unhealthy */
+  var DISPUTE_RAPID_MS = 10 * 60 * 1000;
+  var disputeArr = Object.keys(disputeGroups).map(function(k) { return disputeGroups[k]; });
+  disputeArr.forEach(function(d) {
+    d.times.sort();   /* ISO-8601 strings sort chronologically */
+    d.rapid = 0; d.minGapMs = null;
+    for (var i = 1; i < d.times.length; i++) {
+      var gap = new Date(d.times[i]) - new Date(d.times[i - 1]);
+      if (!isNaN(gap)) {
+        if (gap < DISPUTE_RAPID_MS) d.rapid++;
+        if (d.minGapMs === null || gap < d.minGapMs) d.minGapMs = gap;
+      }
+    }
+  });
+  function fmtGap(ms) {
+    if (ms == null) return '—';
+    if (ms < 6e4) return Math.round(ms / 1000) + 's';
+    if (ms < 3.6e6) return (ms / 6e4).toFixed(1) + 'm';
+    return (ms / 3.6e6).toFixed(1) + 'h';
+  }
   var totalPolls = pollArr.reduce(function(a, g) { return a + g.count; }, 0);
   var redundantPolls = pollArr.reduce(function(a, g) { return a + (g.count - 1); }, 0);
   var biggest = pollArr.reduce(function(m, g) { return g.count > (m ? m.count : 0) ? g : m; }, null);
@@ -2344,6 +2447,30 @@ function showApiHealth() {
     }
     html += '<p class="text-muted mb-0" style="font-size:84%;">Duplicate <em>create</em> attempts (no resource id in the path) are not detected here.</p>';
 
+    /* (4) Dispute re-polling within 10 minutes (dispute GETs are otherwise expected) */
+    if (disputeArr.length) {
+      var flaggedDisputes = disputeArr.filter(function(d) { return d.rapid > 0; }).sort(function(a, b) { return b.rapid - a.rapid; });
+      var disputeReads = disputeArr.reduce(function(a, d) { return a + d.count; }, 0);
+      html += '<hr style="margin:8px 0 12px;">';
+      html += '<h6 class="mb-1"><span class="fa fa-gavel text-warning"></span> Dispute re-polling &lt; 10 min <span class="text-muted" style="font-size:85%;">(' + flaggedDisputes.length + ' of ' + disputeArr.length + ' dispute case(s))</span></h6>';
+      html += '<p class="text-muted mb-2" style="font-size:84%;">Repeatedly fetching a dispute is expected; only re-reading the <em>same</em> dispute within 10 minutes is flagged. <strong>' + disputeArr.length + '</strong> dispute case(s) read across <strong>' + disputeReads + '</strong> GET(s).</p>';
+      if (!flaggedDisputes.length) {
+        html += '<p class="text-muted mb-3" style="font-size:88%;">None &mdash; every re-read was spaced &ge; 10 minutes apart.</p>';
+      } else {
+        html += '<table class="table table-sm table-bordered table-striped mb-1" style="font-size:91%;"><thead class="thead-light"><tr>' +
+          '<th>Dispute ID</th><th style="text-align:center; width:90px;">GET calls</th><th style="text-align:center; width:140px;">Rapid repeats (&lt;10m)</th><th style="text-align:center; width:90px;">Min gap</th></tr></thead><tbody>';
+        flaggedDisputes.forEach(function(d) {
+          var dk = 'disp|' + d.id; drill[dk] = d.records;
+          html += '<tr>' +
+            '<td><a href="javascript:void(0);" class="apihealth-drill" data-key="' + dk + '" style="font-family:monospace; font-size:12px; text-decoration:none;">' + d.id + '</a></td>' +
+            '<td style="text-align:center;"><strong>' + d.count + '</strong></td>' +
+            '<td style="text-align:center;"><strong class="text-danger">' + d.rapid + '</strong></td>' +
+            '<td style="text-align:center; font-size:12px;">' + fmtGap(d.minGapMs) + '</td></tr>';
+        });
+        html += '</tbody></table><p class="text-muted mb-0" style="font-size:84%;">Click a dispute ID to view those records in a new window.</p>';
+      }
+    }
+
     $('#apiHealthTables').html(html);
   }
 
@@ -2372,6 +2499,14 @@ function showApiHealth() {
     actionArr.slice().sort(function(a, b) { return b.count - a.count; }).forEach(function(a) {
       rows.push([a.type + ' ' + a.action, a.id, a.count, Object.keys(a.outcomes).map(function(k) { return k + ':' + a.outcomes[k]; }).join(' ')]);
     });
+    if (disputeArr.length) {
+      rows.push([]);
+      rows.push(['Dispute re-polling (<10 min)']);
+      rows.push(['Dispute ID', 'GET calls', 'Rapid repeats (<10m)', 'Min gap']);
+      disputeArr.slice().sort(function(a, b) { return b.rapid - a.rapid; }).forEach(function(d) {
+        rows.push([d.id, d.count, d.rapid, fmtGap(d.minGapMs)]);
+      });
+    }
     downloadCsv('api_health.csv', [], rows);
   });
 
@@ -2636,6 +2771,464 @@ function showExternalUrls() {
   $('#externalUrlsModal').modal('show');
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * Payer Info — one-time vs. repeating buyers
+ *
+ * A PayPal-approved order response carries the payer's stable identifier at
+ * payment_source.paypal.account_id (email is masked in the log, so account_id
+ * is the key). We group orders by that id and report repeat-buyer behaviour.
+ * Only purchase_units[0]'s payee is inspected (matches buildOrderModel scope).
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/* Build a per-payer model keyed by payment_source.paypal.account_id.
+ * Returns { accountId -> { accountId, accountStatus, country, merchants{mid->brand},
+ *                          orderIds{}, completedOrderIds{}, records[] } }. */
+function buildPayerModel() {
+  var createRe   = /^\/v2\/checkout\/orders$/;
+  var orderUrlRe = /\/v2\/checkout\/orders\/([^\/?]+?)(?:\/(?:capture|authorize))?(?:\?|$)/;
+
+  var ordersById = {};
+
+  tableItems.forEach(function(row) {
+    var url = row.url || '';
+    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
+    var resBody = (row.api_response && row.api_response.body) || {};
+    var pp = resBody.payment_source && resBody.payment_source.paypal;
+    var accountId = pp && pp.account_id;
+    if (!accountId) return;   /* gate: only payer-identified records */
+
+    /* Resolve the order id this record belongs to */
+    var oid = null;
+    if (method === 'POST' && createRe.test(url)) oid = resBody.id;
+    else { var m = url.match(orderUrlRe); if (m) oid = m[1]; }
+    if (!oid) oid = resBody.id;
+    if (!oid) return;
+
+    var o = ordersById[oid];
+    if (!o) o = ordersById[oid] = { orderId: oid, accountId: accountId,
+      accountStatus: null, country: null, merchants: {}, completed: false,
+      amountValue: null, currency: null, records: [] };
+    o.records.push(row);
+    o.accountId = accountId;
+    /* tableItems is sorted newest-first, so first non-null wins = latest value */
+    if (!o.accountStatus && pp.account_status) o.accountStatus = pp.account_status;
+    if (!o.country && pp.address && pp.address.country_code) o.country = pp.address.country_code;
+
+    try {
+      var pu0 = resBody.purchase_units && resBody.purchase_units[0];
+      var payee = pu0 && pu0.payee;
+      if (payee && payee.merchant_id) {
+        var brand = (payee.display_data && payee.display_data.brand_name) || '';
+        if (brand || !(payee.merchant_id in o.merchants)) {
+          o.merchants[payee.merchant_id] = brand || o.merchants[payee.merchant_id] || '';
+        }
+      }
+      /* Order total from purchase_units[0].amount (constant across the order's life) */
+      var amt = pu0 && pu0.amount;
+      if (amt && amt.value != null && o.amountValue == null) {
+        var v = parseFloat(amt.value);
+        if (!isNaN(v)) { o.amountValue = v; o.currency = amt.currency_code || null; }
+      }
+    } catch (e) {}
+
+    var hs = parseInt(row.http_status || (row.api_response && row.api_response.status));
+    var capSt = _puFirst(resBody, 'captures', 'status');
+    if ((capSt && _captureOutcome(hs, capSt) === 'completed') || resBody.status === 'COMPLETED') o.completed = true;
+  });
+
+  /* Group orders by payer */
+  var payers = {};
+  Object.keys(ordersById).forEach(function(oid) {
+    var o = ordersById[oid];
+    var p = payers[o.accountId];
+    if (!p) p = payers[o.accountId] = { accountId: o.accountId, accountStatus: null,
+      country: null, merchants: {}, orderIds: {}, completedOrderIds: {}, orders: {}, records: [] };
+    p.orderIds[oid] = true;
+    if (o.completed) p.completedOrderIds[oid] = true;
+    p.orders[oid] = { completed: o.completed, value: o.amountValue, currency: o.currency };
+    if (!p.accountStatus && o.accountStatus) p.accountStatus = o.accountStatus;
+    if (!p.country && o.country) p.country = o.country;
+    Object.keys(o.merchants).forEach(function(mid) {
+      if (o.merchants[mid] || !(mid in p.merchants)) p.merchants[mid] = o.merchants[mid] || p.merchants[mid] || '';
+    });
+    p.records = p.records.concat(o.records);
+  });
+
+  return payers;
+}
+
+/* ── Payer Info analysis ── */
+function showPayerInfo() {
+  var payers = buildPayerModel();
+  var accountIds = Object.keys(payers);
+
+  if (!accountIds.length) {
+    $('#payerInfoContent').html('<div class="alert alert-info mb-0">No payer data found. ' +
+      'This view groups orders by <code>payment_source.paypal.account_id</code>, which only ' +
+      'appears once a buyer has approved a PayPal order.</div>');
+    $('#payerInfoModal').modal('show');
+    return;
+  }
+
+  var view = 'summary';   /* 'summary' | 'payer' */
+  var metric = 'all';     /* 'all' | 'completed' */
+  var drill = {};
+
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function orderCount(p) { return Object.keys(metric === 'completed' ? p.completedOrderIds : p.orderIds).length; }
+  /* Sum a payer's order amounts per currency, over the order set for `mode` ('all'|'completed') */
+  function amountTotals(p, mode) {
+    mode = mode || metric;
+    var totals = {};
+    Object.keys(p.orders).forEach(function(oid) {
+      var o = p.orders[oid];
+      if (mode === 'completed' && !o.completed) return;
+      if (o.value == null || !o.currency) return;
+      totals[o.currency] = (totals[o.currency] || 0) + o.value;
+    });
+    return totals;
+  }
+  function addTotals(into, from) { Object.keys(from).forEach(function(c) { into[c] = (into[c] || 0) + from[c]; }); return into; }
+  function totalsStr(t) { return Object.keys(t).sort().map(function(c) { return t[c].toFixed(2) + ' ' + c; }).join('; '); }
+  /* totalsStr yields only digits / 3-letter currency codes / spaces — no HTML-escaping needed */
+  function totalsHtml(t) { return Object.keys(t).length ? totalsStr(t).replace(/; /g, '<br>') : '<span class="text-muted">—</span>'; }
+  function merchantLabel(p) {
+    var mids = Object.keys(p.merchants);
+    if (!mids.length) return '<span class="text-muted">—</span>';
+    return mids.map(function(mid) {
+      var brand = p.merchants[mid];
+      return '<code style="font-size:11px;">' + esc(mid) + '</code>' + (brand ? ' <span style="font-size:85%;">(' + esc(brand) + ')</span>' : '');
+    }).join('<br>');
+  }
+  function recordsOf(payerArr) {
+    var recs = [];
+    payerArr.forEach(function(p) { recs = recs.concat(p.records); });
+    var seen = {}, out = [];
+    recs.forEach(function(r) {
+      var k = (r.correlation_id && r.correlation_id !== 'xxxxxx') ? r.correlation_id : (r.create_time + '|' + r.url);
+      if (seen[k]) return; seen[k] = true; out.push(r);
+    });
+    out.sort(function(a, b) { return new Date(b.create_time) - new Date(a.create_time); });
+    return out;
+  }
+
+  function toolbarHtml() {
+    function btn(group, val, cur, label) {
+      return '<button type="button" class="btn btn-sm ' + (cur === val ? 'btn-primary' : 'btn-outline-primary') +
+        ' payer-' + group + '" data-val="' + val + '">' + label + '</button>';
+    }
+    var h = '<div class="d-flex flex-wrap" style="gap:16px; margin-bottom:12px;">';
+    h += '<div><span class="text-muted mr-1" style="font-size:85%;">View:</span><div class="btn-group btn-group-sm">' +
+         btn('view', 'summary', view, 'Summary') + btn('view', 'payer', view, 'By Payer') + '</div></div>';
+    h += '<div><span class="text-muted mr-1" style="font-size:85%;">Count:</span><div class="btn-group btn-group-sm">' +
+         btn('metric', 'all', metric, 'All identified orders') + btn('metric', 'completed', metric, 'Completed only') + '</div></div>';
+    h += '</div>';
+    return h;
+  }
+
+  function render() {
+    drill = {};
+    var html = toolbarHtml();
+    var chartTask = null;
+
+    if (view === 'summary') {
+      var oneTime = [], returning = [];
+      var oneTimeOrders = 0, returningOrders = 0, excluded = 0;
+      accountIds.forEach(function(id) {
+        var p = payers[id], c = orderCount(p);
+        if (c <= 0) { excluded++; return; }
+        if (c === 1) { oneTime.push(p); oneTimeOrders += c; }
+        else { returning.push(p); returningOrders += c; }
+      });
+      drill['bucket|one'] = recordsOf(oneTime);
+      drill['bucket|ret'] = recordsOf(returning);
+
+      var total = oneTime.length + returning.length;
+      var noun = metric === 'completed' ? 'completed order' : 'identified order';
+      function pctOf(c) { return total ? (c / total * 100).toFixed(1) + '%' : '0.0%'; }
+      function sumSegment(arr) { var t = {}; arr.forEach(function(p) { addTotals(t, amountTotals(p)); }); return t; }
+      var oneTimeAmt = sumSegment(oneTime), returningAmt = sumSegment(returning);
+      var colors = ['#4e79a7', '#59a14f'];
+      var slices = [];
+      var rowDefs = [
+        ['one', 'One-time payer (1 ' + noun + ')', oneTime.length, oneTimeOrders, oneTimeAmt],
+        ['ret', 'Returning payer (2+ ' + noun + 's)', returning.length, returningOrders, returningAmt]
+      ];
+
+      html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
+      html += '<div style="flex:1; min-width:0;">';
+      html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:92%;"><thead class="thead-light"><tr>' +
+              '<th>Payer segment</th><th style="text-align:center; width:80px;">Payers</th>' +
+              '<th style="text-align:center; width:60px;">%</th><th style="text-align:center; width:80px;">Orders</th>' +
+              '<th style="text-align:right; width:140px;">Total amount</th></tr></thead><tbody>';
+      rowDefs.forEach(function(rd, i) {
+        var key = rd[0], label = rd[1], payerN = rd[2], orderN = rd[3], amt = rd[4];
+        slices.push({ label: label, value: payerN, color: colors[i] });
+        var cnt = payerN ? '<a href="javascript:void(0);" class="payer-drill font-weight-bold" data-key="bucket|' + key + '" style="text-decoration:none;">' + payerN + '</a>'
+                         : '<span class="text-muted">0</span>';
+        html += '<tr data-slice-index="' + i + '">' +
+          '<td><span style="display:inline-block;width:10px;height:10px;background:' + colors[i] + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span>' + label + '</td>' +
+          '<td style="text-align:center;">' + cnt + '</td>' +
+          '<td style="text-align:center;">' + pctOf(payerN) + '</td>' +
+          '<td style="text-align:center;">' + orderN + '</td>' +
+          '<td style="text-align:right; white-space:nowrap;">' + totalsHtml(amt) + '</td></tr>';
+      });
+      html += '<tr class="table-secondary font-weight-bold"><td>Total</td>' +
+              '<td style="text-align:center;">' + total + '</td><td style="text-align:center;">100%</td>' +
+              '<td style="text-align:center;">' + (oneTimeOrders + returningOrders) + '</td>' +
+              '<td style="text-align:right; white-space:nowrap;">' + totalsHtml(addTotals(addTotals({}, oneTimeAmt), returningAmt)) + '</td></tr>';
+      html += '</tbody></table>';
+      html += '<p class="text-muted mt-1 mb-0" style="font-size:84%;">Click a payer count to view those records in a new window.</p>';
+      if (metric === 'completed' && excluded) {
+        html += '<p class="text-muted mb-0" style="font-size:84%;">' + excluded + ' payer(s) with no completed order are excluded from this view.</p>';
+      }
+      html += '</div>';
+      html += '<div style="flex:0 0 200px;"><canvas id="payerPie" width="200" height="200"></canvas></div>';
+      html += '</div>';
+      chartTask = { canvasId: 'payerPie', slices: slices };
+
+      /* ── Distributions across the included payers (account status, country) ── */
+      var included = oneTime.concat(returning);
+      function distSection(title, colLabel, valOf, prefix) {
+        var groups = {};
+        included.forEach(function(p) {
+          var k = valOf(p) || 'Unknown';
+          (groups[k] = groups[k] || []).push(p);
+        });
+        var keys = Object.keys(groups).sort(function(a, b) { return groups[b].length - groups[a].length; });
+        var tot = included.length;
+        var h = '<h6 class="mb-1" style="font-size:92%;">' + title + '</h6>';
+        h += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:90%;"><thead class="thead-light"><tr>' +
+             '<th>' + colLabel + '</th><th style="text-align:center; width:80px;">Payers</th>' +
+             '<th style="text-align:center; width:60px;">%</th></tr></thead><tbody>';
+        keys.forEach(function(k, i) {
+          var dk = prefix + '|' + k;
+          drill[dk] = recordsOf(groups[k]);
+          var color = PIE_COLORS[i % PIE_COLORS.length];
+          var pc = tot ? (groups[k].length / tot * 100).toFixed(1) + '%' : '0.0%';
+          h += '<tr>' +
+            '<td><span style="display:inline-block;width:10px;height:10px;background:' + color + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span>' + esc(k) + '</td>' +
+            '<td style="text-align:center;"><a href="javascript:void(0);" class="payer-drill font-weight-bold" data-key="' + esc(dk) + '" style="text-decoration:none;">' + groups[k].length + '</a></td>' +
+            '<td style="text-align:center;">' + pc + '</td></tr>';
+        });
+        h += '</tbody></table>';
+        return h;
+      }
+
+      html += '<hr style="margin:14px 0 12px;">';
+      html += '<p class="text-muted mb-2" style="font-size:84%;">Distribution across <strong>' + included.length + '</strong> payer(s)' +
+              (metric === 'completed' ? ' with at least one completed order' : '') + '.</p>';
+      html += '<div style="display:flex; gap:20px; align-items:flex-start; flex-wrap:wrap;">';
+      html += '<div style="flex:1; min-width:240px;">' + distSection('Account status', 'Status', function(p) { return p.accountStatus; }, 'status') + '</div>';
+      html += '<div style="flex:1; min-width:240px;">' + distSection('Country', 'Country', function(p) { return p.country; }, 'country') + '</div>';
+      html += '</div>';
+    } else {
+      var list = accountIds.map(function(id) { return payers[id]; });
+      list.sort(function(a, b) { return orderCount(b) - orderCount(a); });
+      html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:92%;"><thead class="thead-light"><tr>' +
+              '<th>Payer (account_id)</th><th style="text-align:center; width:110px;">Account status</th>' +
+              '<th style="text-align:center; width:64px;">Country</th><th>Merchant / brand</th>' +
+              '<th style="text-align:center; width:70px;">Orders</th>' +
+              '<th style="text-align:right; width:140px;">Total amount</th></tr></thead><tbody>';
+      list.forEach(function(p) {
+        var c = orderCount(p);
+        var dk = 'payer|' + p.accountId;
+        drill[dk] = recordsOf([p]);
+        var cnt = c ? '<a href="javascript:void(0);" class="payer-drill font-weight-bold" data-key="' + esc(dk) + '" style="text-decoration:none;">' + c + '</a>'
+                    : '<span class="text-muted">0</span>';
+        html += '<tr>' +
+          '<td><code style="font-size:12px; user-select:all;">' + esc(p.accountId) + '</code></td>' +
+          '<td style="text-align:center;">' + (p.accountStatus ? esc(p.accountStatus) : '<span class="text-muted">—</span>') + '</td>' +
+          '<td style="text-align:center;">' + (p.country ? esc(p.country) : '<span class="text-muted">—</span>') + '</td>' +
+          '<td>' + merchantLabel(p) + '</td>' +
+          '<td style="text-align:center;">' + cnt + '</td>' +
+          '<td style="text-align:right; white-space:nowrap;">' + totalsHtml(amountTotals(p)) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      html += '<p class="text-muted mt-1 mb-0" style="font-size:84%;">' + list.length + ' payer(s). Click an order count to view that payer&#39;s records.</p>';
+    }
+
+    $('#payerInfoContent').html(html);
+    if (chartTask) renderPieChart({ canvasId: chartTask.canvasId, $container: $('#payerInfoContent'), slices: chartTask.slices });
+  }
+
+  $('#payerInfoContent').off('click', '.payer-view').on('click', '.payer-view', function() { view = $(this).data('val'); render(); });
+  $('#payerInfoContent').off('click', '.payer-metric').on('click', '.payer-metric', function() { metric = $(this).data('val'); render(); });
+  $('#payerInfoContent').off('click', '.payer-drill').on('click', '.payer-drill', function() {
+    var recs = drill[$(this).data('key')] || [];
+    if (recs.length) openFilteredWindow(recs, 'Payer Info');
+  });
+
+  $('#btnExportPayerCsv').off('click').on('click', function() {
+    var rows = accountIds.map(function(id) { return payers[id]; })
+      .sort(function(a, b) { return Object.keys(b.orderIds).length - Object.keys(a.orderIds).length; })
+      .map(function(p) {
+        var merchants = Object.keys(p.merchants).map(function(mid) {
+          var b = p.merchants[mid]; return mid + (b ? ' (' + b + ')' : '');
+        }).join('; ');
+        return [p.accountId, p.accountStatus || '', p.country || '', merchants,
+                Object.keys(p.orderIds).length, Object.keys(p.completedOrderIds).length,
+                totalsStr(amountTotals(p, 'all')), totalsStr(amountTotals(p, 'completed'))];
+      });
+    downloadCsv('payer_info.csv',
+      ['Account ID', 'Account status', 'Country', 'Merchant / brand', 'All identified orders', 'Completed orders',
+       'Total amount (all)', 'Total amount (completed)'], rows);
+  });
+
+  render();
+  $('#payerInfoModal').modal('show');
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * Dispute Case Summary
+ *
+ * Merchants GET /v1/customer/disputes/{id} repeatedly over a case's life. We
+ * group those reads by dispute_id, order snapshots oldest→latest, and surface
+ * the status progression (consecutive duplicates collapsed) plus the latest
+ * seller_transaction_id, amount, reason, life-cycle stage, the first buyer
+ * message, and the create / update timestamps.
+ * ════════════════════════════════════════════════════════════════════════ */
+function buildDisputeModel() {
+  var disputeUrlRe = /\/v1\/customer\/disputes\/([^\/?]+)/;
+  var byId = {};
+
+  tableItems.forEach(function(row) {
+    var resBody = (row.api_response && row.api_response.body) || {};
+    var id = resBody.dispute_id;
+    if (!id) {
+      var m = (row.url || '').match(disputeUrlRe);
+      /* Only treat as a dispute case if the body actually carries dispute fields */
+      if (m && (resBody.status || resBody.reason || resBody.disputed_transactions)) id = m[1];
+    }
+    if (!id) return;
+    var d = byId[id] || (byId[id] = { id: id, records: [], snaps: [] });
+    d.records.push(row);
+    d.snaps.push({ t: row.create_time || '', body: resBody });
+  });
+
+  Object.keys(byId).forEach(function(id) {
+    var d = byId[id];
+    d.snaps.sort(function(a, b) { return a.t < b.t ? -1 : (a.t > b.t ? 1 : 0); });  /* oldest → latest */
+    var latest = d.snaps[d.snaps.length - 1].body;
+
+    /* Status progression, collapsing consecutive duplicates (last value = current status) */
+    var seq = [];
+    d.snaps.forEach(function(s) {
+      var st = s.body.status;
+      if (st && (!seq.length || seq[seq.length - 1] !== st)) seq.push(st);
+    });
+    d.statusSeq = seq.join(', ');
+
+    d.sellerTxn = '';
+    try { var dt = latest.disputed_transactions; if (dt && dt.length) d.sellerTxn = dt[0].seller_transaction_id || ''; } catch (e) {}
+    d.amount = '';
+    try { var amt = latest.dispute_amount; if (amt && amt.value != null) d.amount = amt.value + (amt.currency_code ? ' ' + amt.currency_code : ''); } catch (e) {}
+    d.reason = latest.reason || '';
+    d.stage = latest.dispute_life_cycle_stage || '';
+    d.created = latest.create_time || (d.snaps[0] && d.snaps[0].t) || '';
+    d.updated = latest.update_time || d.snaps[d.snaps.length - 1].t || '';
+
+    /* First message posted by the buyer (earliest by time_posted), scanning every
+     * snapshot since a later poll may return a trimmed/empty messages array. */
+    d.buyerMsg = '';
+    try {
+      var buyerMsgs = [];
+      d.snaps.forEach(function(s) {
+        (s.body.messages || []).forEach(function(mm) {
+          if ((mm.posted_by || '').toUpperCase() === 'BUYER') buyerMsgs.push(mm);
+        });
+      });
+      buyerMsgs.sort(function(a, b) { return (a.time_posted || '') < (b.time_posted || '') ? -1 : 1; });
+      if (buyerMsgs.length) d.buyerMsg = buyerMsgs[0].content || '';
+    } catch (e) {}
+  });
+
+  return byId;
+}
+
+/* ── Dispute Case Summary panel ── */
+function showDisputes() {
+  var byId = buildDisputeModel();
+  var ids = Object.keys(byId);
+
+  if (!ids.length) {
+    $('#disputesContent').html('<div class="alert alert-info mb-0">No dispute data found. ' +
+      'This view summarizes <code>GET /v1/customer/disputes/{id}</code> responses.</div>');
+    $('#disputesModal').modal('show');
+    return;
+  }
+
+  var list = ids.map(function(id) { return byId[id]; })
+    .sort(function(a, b) { return a.updated < b.updated ? 1 : (a.updated > b.updated ? -1 : 0); });  /* latest updated first */
+
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function fmtDate(t) { if (!t) return ''; try { return moment.utc(t).tz(ianaTimezone).format('YYYY-MM-DD HH:mm'); } catch (e) { return String(t); } }
+
+  var drill = {};
+  function buildRows(linkIds) {
+    var h = '';
+    list.forEach(function(d) {
+      var idCell;
+      if (linkIds) {
+        var dk = 'disp|' + d.id; drill[dk] = d.records;
+        idCell = '<a href="javascript:void(0);" class="disp-drill" data-key="' + esc(dk) + '" style="font-family:monospace; font-size:12px; text-decoration:none;">' + esc(d.id) + '</a>';
+      } else {
+        idCell = '<code style="font-size:12px;">' + esc(d.id) + '</code>';
+      }
+      h += '<tr>' +
+        '<td style="white-space:nowrap;">' + idCell + '</td>' +
+        '<td style="font-family:monospace; font-size:11px;">' + (d.sellerTxn ? esc(d.sellerTxn) : '—') + '</td>' +
+        '<td style="white-space:nowrap;">' + (d.amount ? esc(d.amount) : '—') + '</td>' +
+        '<td style="font-size:12px;">' + (d.statusSeq ? esc(d.statusSeq) : '—') + '</td>' +
+        '<td style="font-size:12px;">' + (d.reason ? esc(d.reason) : '—') + '</td>' +
+        '<td style="font-size:12px;">' + (d.stage ? esc(d.stage) : '—') + '</td>' +
+        '<td style="font-size:12px; min-width:220px; white-space:normal; word-break:break-word;">' + (d.buyerMsg ? esc(d.buyerMsg) : '<span style="color:#999;">—</span>') + '</td>' +
+        '<td style="white-space:nowrap; font-size:12px;">' + fmtDate(d.created) + '</td>' +
+        '<td style="white-space:nowrap; font-size:12px;">' + fmtDate(d.updated) + '</td>' +
+        '</tr>';
+    });
+    return h;
+  }
+  function tableHtml(linkIds) {
+    return '<table class="table table-sm table-bordered table-striped mb-1" style="font-size:91%;"><thead class="thead-light"><tr>' +
+      '<th>Dispute ID</th><th>Seller Txn ID</th><th>Amount</th><th>Status (old&rarr;latest)</th><th>Reason</th>' +
+      '<th>Life cycle stage</th><th>First buyer message</th><th>Created</th><th>Last updated</th>' +
+      '</tr></thead><tbody>' + buildRows(linkIds) + '</tbody></table>';
+  }
+
+  var content = '<p class="mb-2" style="font-size:90%;"><strong>' + list.length + '</strong> distinct dispute case(s). ' +
+    'The <em>Status</em> column shows progression from oldest to latest read (so the last value is the current status).</p>';
+  content += '<div style="overflow-x:auto;">' + tableHtml(true) + '</div>';
+  content += '<p class="text-muted mt-1 mb-0" style="font-size:84%;">Click a dispute ID to view its API History records. Use &ldquo;Open in new window&rdquo; for a roomier full-width view.</p>';
+  $('#disputesContent').html(content);
+
+  $('#disputesContent').off('click', '.disp-drill').on('click', '.disp-drill', function() {
+    var recs = drill[$(this).data('key')] || [];
+    if (recs.length) openFilteredWindow(recs, 'Dispute records');
+  });
+
+  $('#btnDisputesNewWindow').off('click').on('click', function() {
+    var w = window.open('', '_blank');
+    if (!w) { alert('Popup blocked. Please allow popups for this site.'); return; }
+    var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dispute Case Summary</title>' +
+      '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">' +
+      '<style>body{padding:20px;font-size:13px;} td{vertical-align:top;} table{font-size:12px;}</style></head><body>' +
+      '<h5>Dispute Case Summary <span class="badge badge-secondary">' + list.length + ' case(s)</span></h5>' +
+      tableHtml(false) + '</body></html>';
+    w.document.write(html); w.document.close();
+  });
+
+  $('#btnExportDisputesCsv').off('click').on('click', function() {
+    var headers = ['Dispute ID', 'Seller Txn ID', 'Amount', 'Status (old->latest)', 'Reason', 'Life cycle stage', 'First buyer message', 'Created', 'Last updated'];
+    var rows = list.map(function(d) {
+      return [d.id, d.sellerTxn || '', d.amount || '', d.statusSeq || '', d.reason || '', d.stage || '', d.buyerMsg || '', fmtDate(d.created), fmtDate(d.updated)];
+    });
+    downloadCsv('dispute_cases.csv', headers, rows);
+  });
+
+  $('#disputesModal').modal('show');
+}
+
 /* ── Load data from file picker ── */
 function loadAndRender(allData) {
   if (!allData || !allData.length) {
@@ -2685,6 +3278,8 @@ $(document).ready(function() {
   $('#btnDropOff').on('click', showDropOff);
   $('#btnApiHealth').on('click', showApiHealth);
   $('#btnExternalUrls').on('click', showExternalUrls);
+  $('#btnPayerInfo').on('click', showPayerInfo);
+  $('#btnDisputes').on('click', showDisputes);
 
   /* Exclude filter events */
   $('#exclude-add-btn').on('click', function() {
