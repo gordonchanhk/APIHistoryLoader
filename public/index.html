@@ -738,7 +738,7 @@ function getFormattedData(index, row, isModal) {
   dHtml += '<div style="display:table-cell; vertical-align:middle;"><div style="display:inline-block;padding-bottom:2px;padding-top:5px;"><b>client_id:</b></div> <div style="display:inline; margin:0; color:#888">' + (clientId || '') + '</div></div><div style="clear:both;"></div>';
   dHtml += '<b>Request headers</b><br/><pre class="requestheader jsoncode plaintext" style="overflow-x:hidden;">';
   for (var rp in req_header) {
-    dHtml += fmtParam(rp) + ': ' + fmtValue(req_header[rp]) + '<br/>';
+    dHtml += fmtParam(rp) + ': ' + fmtValue(req_header[rp]) + '\n';
   }
   dHtml += '</pre>';
 
@@ -747,9 +747,9 @@ function getFormattedData(index, row, isModal) {
   for (var sp in res_header) {
     if (sp === "Date") {
       var ptDate = convertGMTtoTime(res_header[sp]);
-      dHtml += fmtParam(sp) + ': ' + fmtValue(ptDate.fullDate) + '<br/>';
+      dHtml += fmtParam(sp) + ': ' + fmtValue(ptDate.fullDate) + '\n';
     } else {
-      dHtml += fmtParam(sp) + ': ' + fmtValue(res_header[sp]) + '<br/>';
+      dHtml += fmtParam(sp) + ': ' + fmtValue(res_header[sp]) + '\n';
     }
   }
   dHtml += '</pre></div>';
@@ -3270,6 +3270,22 @@ function loadAndRender(allData) {
   applyExclusions();
 }
 
+/* Drop api_request.header entries whose value is empty or masked ('xxxxxx').
+ * Done per parsed chunk at load time to cut memory before records accumulate.
+ * Mutates each record in place. */
+function stripMaskedRequestHeaders(records) {
+  for (var i = 0; i < records.length; i++) {
+    var r = records[i];
+    var h = r && r.api_request && r.api_request.header;
+    if (!h || typeof h !== 'object') continue;
+    for (var k in h) {
+      if (!Object.prototype.hasOwnProperty.call(h, k)) continue;
+      var v = h[k];
+      if (v == null || v === 'xxxxxx' || (typeof v === 'string' && v.trim() === '')) delete h[k];
+    }
+  }
+}
+
 $(document).ready(function() {
   $('#btnErrorAnalysis').on('click', showErrorAnalysis);
   $('#btnEndpointCount').on('click', showEndpointCount);
@@ -3337,6 +3353,7 @@ $(document).ready(function() {
         try {
           var parsed = JSON.parse(ev.target.result);
           if (!Array.isArray(parsed)) throw new Error('File content is not a JSON array');
+          stripMaskedRequestHeaders(parsed);  /* drop empty/masked request headers before they accumulate */
           allData = allData.concat(parsed);
           parsed = null; /* free the parsed chunk's local reference */
         } catch (err) {
