@@ -143,6 +143,57 @@ tr.pie-highlight {
 .funnel-cap { font-size: 86%; color: #444; margin-top: 2px; }
 .funnel-cap .funnel-pct { color: #888; font-size: 92%; }
 .funnel-stale { opacity: 0.45; }
+
+/* ── Dispute Calendar (full-page panel) ── */
+#disputeCalendarPanel {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  width: 100%; height: 100%; background: #fff; z-index: 1035; overflow-y: auto;
+}
+.dc-panel-header {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 12px;
+  padding: 10px 18px; color: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  background-image: linear-gradient(100deg, #0070ba, #1546a0);
+}
+.dc-panel-title { font-size: 118%; font-weight: 600; margin-right: auto; white-space: nowrap; }
+.dc-panel-header .dc-caseid-input { max-width: 300px; height: 30px; }
+.dc-panel-header .btn { margin: 0; }
+.dc-panel-body { padding: 16px 22px 60px; max-width: 1320px; margin: 0 auto; }
+
+.dc-cal-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.dc-cal-nav .btn { margin: 0; }
+.dc-cal-range { font-weight: 600; font-size: 106%; margin: 0 6px; }
+.dc-cal-hint { font-size: 84%; color: #888; margin-left: auto; }
+.dc-months { display: flex; gap: 26px; flex-wrap: wrap; }
+.dc-month { flex: 1 1 340px; min-width: 300px; }
+.dc-month-title { text-align: center; font-weight: 600; margin-bottom: 8px; color: #333; }
+.dc-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.dc-dow { text-align: center; font-size: 76%; color: #999; font-weight: 700; padding: 2px 0; text-transform: uppercase; }
+.dc-cell {
+  position: relative; min-height: 54px; border: 1px solid #ececec; border-radius: 6px;
+  padding: 3px 6px; background: #fafafa;
+}
+.dc-cell.dc-empty { border: none; background: transparent; }
+.dc-daynum { font-size: 80%; color: #777; }
+.dc-cell.dc-has { background: #e8f0fe; border-color: #b6d0fb; cursor: pointer; }
+.dc-cell.dc-has:hover { background: #d3e3fd; }
+.dc-count {
+  position: absolute; right: 5px; bottom: 5px; background: #e15759; color: #fff;
+  border-radius: 10px; font-size: 76%; font-weight: 700; padding: 1px 7px; line-height: 1.4;
+}
+.dc-cell.dc-selected { outline: 2px solid #0070ba; outline-offset: -1px; background: #cfe0fb; }
+
+.dc-list-head { margin: 22px 0 10px; font-size: 98%; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dc-pager { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+.dc-pager .btn { margin: 0; }
+.dc-page-info { font-size: 86%; color: #666; }
+
+.dc-detail-grid { display: grid; grid-template-columns: max-content 1fr; gap: 5px 16px; font-size: 92%; margin-bottom: 6px; }
+.dc-detail-grid .k { color: #666; font-weight: 600; }
+.dc-detail-grid .v { word-break: break-word; }
+.dc-sec-title { font-weight: 600; margin: 16px 0 7px; font-size: 99%; border-bottom: 1px solid #eee; padding-bottom: 3px; }
+.dc-msg { border-left: 3px solid #888; padding: 2px 10px; margin-bottom: 7px; }
+.dc-msg-meta { font-size: 80%; color: #666; margin-bottom: 1px; }
+.dc-msg-body { font-size: 89%; white-space: pre-wrap; word-break: break-word; }
 </style>
 </head>
 <body>
@@ -185,6 +236,7 @@ tr.pie-highlight {
     <button type="button" class="btn btn-sm btn-outline-primary" id="btnPayerInfo"><span class="fa fa-users"></span> Payer Info</button>
     <button type="button" class="btn btn-sm btn-outline-info" id="btnDemographics"><span class="fa fa-globe"></span> Demographics</button>
     <button type="button" class="btn btn-sm btn-outline-danger" id="btnDisputes"><span class="fa fa-gavel"></span> Disputes</button>
+    <button type="button" class="btn btn-sm btn-outline-danger" id="btnDisputeCalendar"><span class="fa fa-calendar"></span> Dispute Calendar</button>
     <span id="exclude-section">
       <span class="text-muted" style="font-size:90%; margin-right:2px;">Exclude:</span>
       <input type="text" id="exclude-input" class="form-control form-control-sm d-inline-block" placeholder="path or keyword">
@@ -383,6 +435,38 @@ tr.pie-highlight {
       <div class="modal-footer" style="padding:6px 10px;">
         <button type="button" class="btn btn-sm btn-outline-secondary" id="btnDisputesNewWindow"><span class="fa fa-external-link"></span> Open in new window</button>
         <button type="button" class="btn btn-sm btn-outline-info" id="btnExportDisputesCsv"><span class="fa fa-download"></span> Export CSV</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Dispute Calendar (full-page panel) -->
+<div id="disputeCalendarPanel" style="display:none;">
+  <div class="dc-panel-header">
+    <span class="dc-panel-title"><span class="fa fa-calendar"></span> Dispute Calendar</span>
+    <input type="text" id="dc-caseid" class="form-control form-control-sm dc-caseid-input" placeholder="Filter by dispute case ID…" autocomplete="off">
+    <button type="button" class="btn btn-sm btn-light" id="dc-close"><span class="fa fa-times"></span> Close</button>
+  </div>
+  <div class="dc-panel-body">
+    <div id="dc-calendar"></div>
+    <div id="dc-list"></div>
+  </div>
+</div>
+
+<!-- Dispute Detail Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="disputeDetailModal">
+  <div class="modal-dialog" style="max-width:900px !important; top:24px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" id="disputeDetailTitle" style="margin:0;"></h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 160px); background-color:#fff;">
+        <div id="disputeDetailBody"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="btnDisputeDetailRecords"><span class="fa fa-list"></span> View API records</button>
         <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
       </div>
     </div>
@@ -794,7 +878,7 @@ function getFormattedData(index, row, isModal) {
 
   /* Response body */
   dHtml += '<b>Response ' + (isModal ? 'body ' : '') + '</b><br/>';
-  dHtml += '<pre class="responsebody jsoncode" style="max-height:500px;">' + fmtJson(res.body) + '</pre>';
+  dHtml += '<pre class="responsebody jsoncode" style="max-height:1000px;">' + fmtJson(res.body) + '</pre>';
 
   dHtml = '<pre>' + dHtml + '</pre></div>';
   return dHtml;
@@ -3542,6 +3626,299 @@ function showDisputes() {
   $('#disputesModal').modal('show');
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * Dispute Calendar — full-page panel
+ *
+ * A calendar-first view over dispute cases derived from
+ * GET /v1/customer/disputes/{id} responses (via buildDisputeModel). Two months
+ * are shown side by side; each day cell carries a badge with the number of
+ * dispute cases *created* on that day (by dispute create_time, in the local
+ * timezone). Selecting a day filters the list below to that date; unselecting
+ * lists every case, paginated 50/page. A dispute-id box filters across all
+ * cases. Each row opens a detail modal with status, reason, life-cycle stage,
+ * amount, transaction info, offers, submitted evidence and messages.
+ * ════════════════════════════════════════════════════════════════════════ */
+var dcState = null;       /* { cases, counts, leftMonth(moment), selectedDate, caseIdFilter, page } */
+var dcDetailCase = null;  /* case currently shown in the detail modal */
+
+function dcEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function dcFmtDate(t) { if (!t) return ''; try { return moment.utc(t).tz(ianaTimezone).format('YYYY-MM-DD HH:mm'); } catch (e) { return String(t); } }
+function dcDayKey(t) { if (!t) return ''; try { return moment.utc(t).tz(ianaTimezone).format('YYYY-MM-DD'); } catch (e) { return ''; } }
+function dcAmt(a) { if (!a || a.value == null) return ''; return dcEsc(a.value + (a.currency_code ? ' ' + a.currency_code : '')); }
+
+function dcStatusBadge(st) {
+  if (!st) return '<span class="text-muted">—</span>';
+  var s = String(st).toUpperCase(), cls = 'secondary';
+  if (s.indexOf('RESOLVED') !== -1) cls = 'success';
+  else if (s.indexOf('DENIED') !== -1 || s.indexOf('REJECT') !== -1) cls = 'danger';
+  else if (s.indexOf('WAITING') !== -1 || s.indexOf('REVIEW') !== -1 || s.indexOf('REQUIRED') !== -1 || s.indexOf('RESPONSE') !== -1) cls = 'warning';
+  else if (s.indexOf('OPEN') !== -1 || s.indexOf('INQUIRY') !== -1 || s.indexOf('UNDER') !== -1) cls = 'info';
+  return '<span class="badge badge-' + cls + '">' + dcEsc(st) + '</span>';
+}
+
+/* Latest snapshot body for a case (snaps are ordered oldest→latest). */
+function dcLatestBody(c) { return (c.snaps && c.snaps.length) ? c.snaps[c.snaps.length - 1].body : {}; }
+function dcFindCase(id) { for (var i = 0; i < dcState.cases.length; i++) { if (dcState.cases[i].id === id) return dcState.cases[i]; } return null; }
+
+/* Dispute dates (YYYY-MM-DD, chronological) falling within the two months
+   currently shown. Keys sort lexically = chronologically. */
+function dcVisibleDisputeDates() {
+  var lo = dcState.leftMonth.clone().startOf('month').format('YYYY-MM-DD');
+  var hi = dcState.leftMonth.clone().add(1, 'month').endOf('month').format('YYYY-MM-DD');
+  return Object.keys(dcState.counts).filter(function(k) { return k >= lo && k <= hi; }).sort();
+}
+
+/* Run after a month change (prev/next/this-month): clear any prior selection and
+   preselect the earliest dispute date shown, so the list below always reflects
+   the visible calendar. If no dispute falls in view, show an empty state instead
+   of leaving stale cases below. */
+function dcAfterNav() {
+  dcState.page = 0;
+  var dates = dcVisibleDisputeDates();
+  if (dates.length) { dcState.selectedDate = dates[0]; dcState.navEmpty = false; }
+  else { dcState.selectedDate = null; dcState.navEmpty = true; }
+  dcRenderCalendar();
+  dcRenderList();
+}
+
+function showDisputeCalendar() {
+  var byId = buildDisputeModel();
+  var cases = Object.keys(byId).map(function(id) { return byId[id]; });
+  cases.forEach(function(c) { c.createdKey = dcDayKey(c.created); });
+  cases.sort(function(a, b) { return a.created < b.created ? 1 : (a.created > b.created ? -1 : 0); }); /* newest first */
+
+  var counts = {};
+  cases.forEach(function(c) { if (c.createdKey) counts[c.createdKey] = (counts[c.createdKey] || 0) + 1; });
+
+  /* Anchor the right-hand month on the most recent dispute (or the current
+     month if there is no data), so the newest activity is visible on open. */
+  var anchor = (cases.length && cases[0].created)
+    ? moment.utc(cases[0].created).tz(ianaTimezone).startOf('month')
+    : moment().startOf('month');
+
+  dcState = {
+    cases: cases,
+    counts: counts,
+    leftMonth: anchor.clone().subtract(1, 'month'),
+    selectedDate: null,
+    caseIdFilter: '',
+    page: 0,
+    navEmpty: false
+  };
+
+  $('#dc-caseid').val('');
+  $('#disputeCalendarPanel').show();
+  $('body').css('overflow', 'hidden');
+  dcRenderCalendar();
+  dcRenderList();
+}
+
+function dcMonthGrid(m) {
+  var firstDow = m.day();               /* 0 Sun … 6 Sat */
+  var daysInMonth = m.daysInMonth();
+  var h = '<div class="dc-month"><div class="dc-month-title">' + m.format('MMMM YYYY') + '</div><div class="dc-grid">';
+  ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(function(d) { h += '<div class="dc-dow">' + d + '</div>'; });
+  for (var i = 0; i < firstDow; i++) h += '<div class="dc-cell dc-empty"></div>';
+  for (var day = 1; day <= daysInMonth; day++) {
+    var key = m.clone().date(day).format('YYYY-MM-DD');
+    var cnt = dcState.counts[key] || 0;
+    var cls = 'dc-cell';
+    if (cnt > 0) cls += ' dc-has';
+    if (dcState.selectedDate === key) cls += ' dc-selected';
+    h += '<div class="' + cls + '" data-date="' + key + '"><span class="dc-daynum">' + day + '</span>' +
+         (cnt > 0 ? '<span class="dc-count">' + cnt + '</span>' : '') + '</div>';
+  }
+  return h + '</div></div>';
+}
+
+function dcRenderCalendar() {
+  var left = dcState.leftMonth.clone();
+  var right = left.clone().add(1, 'month');
+  var h = '<div class="dc-cal-nav">' +
+    '<button class="btn btn-sm btn-outline-secondary" id="dc-prev"><span class="fa fa-chevron-left"></span> Prev</button>' +
+    '<span class="dc-cal-range">' + left.format('MMM YYYY') + ' – ' + right.format('MMM YYYY') + '</span>' +
+    '<button class="btn btn-sm btn-outline-secondary" id="dc-next">Next <span class="fa fa-chevron-right"></span></button>' +
+    '<button class="btn btn-sm btn-outline-primary" id="dc-thismonth">This month</button>' +
+    '<span class="dc-cal-hint">Click a highlighted day to filter cases created that day.</span>' +
+    '</div>';
+  h += '<div class="dc-months">' + dcMonthGrid(left) + dcMonthGrid(right) + '</div>';
+  $('#dc-calendar').html(h);
+}
+
+function dcRenderList() {
+  var s = dcState, PAGE = 50;
+
+  /* Empty state after navigating to months with no disputes (no active filters). */
+  if (!s.selectedDate && !s.caseIdFilter && s.navEmpty) {
+    $('#dc-list').html(
+      '<div class="dc-list-head"><span>No dispute cases were created in the displayed months.</span>' +
+      '<button class="btn btn-xsm btn-outline-secondary" id="dc-show-all">List all cases</button></div>' +
+      '<div class="alert alert-info mb-0" style="font-size:88%;">Use Prev / Next to find a month with a highlighted day, or list all cases.</div>'
+    );
+    return;
+  }
+
+  var rows = s.cases.slice();
+  if (s.selectedDate) rows = rows.filter(function(c) { return c.createdKey === s.selectedDate; });
+  if (s.caseIdFilter) {
+    var q = s.caseIdFilter.toLowerCase();
+    rows = rows.filter(function(c) { return String(c.id).toLowerCase().indexOf(q) !== -1; });
+  }
+
+  var heading = s.selectedDate
+    ? '<strong>' + rows.length + '</strong> dispute case(s) created on <strong>' + dcEsc(s.selectedDate) + '</strong>'
+    : '<strong>' + rows.length + '</strong> dispute case(s)' + (s.caseIdFilter ? ' matching &ldquo;' + dcEsc(s.caseIdFilter) + '&rdquo;' : '');
+  var h = '<div class="dc-list-head">' + heading;
+  if (s.selectedDate) h += '<button class="btn btn-xsm btn-outline-secondary" id="dc-clear-date">Show all dates</button>';
+  h += '</div>';
+
+  if (!rows.length) {
+    h += '<div class="alert alert-info mb-0">No dispute cases' +
+      (s.selectedDate ? ' created on this date' : '') + (s.caseIdFilter ? ' matching that ID' : '') + '.</div>';
+    $('#dc-list').html(h);
+    return;
+  }
+
+  var pages = Math.ceil(rows.length / PAGE);
+  if (s.page >= pages) s.page = 0;
+  var start = s.page * PAGE;
+  var pageRows = rows.slice(start, start + PAGE);
+
+  h += '<div style="overflow-x:auto;"><table class="table table-sm table-bordered table-striped mb-1" style="font-size:90%;">' +
+    '<thead class="thead-light"><tr><th>Dispute ID</th><th>Created</th><th>Status</th><th>Reason</th>' +
+    '<th>Life cycle stage</th><th>Amount</th><th style="width:82px;"></th></tr></thead><tbody>';
+  pageRows.forEach(function(c) {
+    var status = dcLatestBody(c).status || '';
+    h += '<tr>' +
+      '<td style="font-family:monospace; font-size:12px; white-space:nowrap;">' + dcEsc(c.id) + '</td>' +
+      '<td style="white-space:nowrap; font-size:12px;">' + dcFmtDate(c.created) + '</td>' +
+      '<td>' + dcStatusBadge(status) + '</td>' +
+      '<td style="font-size:12px;">' + dcEsc(c.reason || '—') + '</td>' +
+      '<td style="font-size:12px;">' + dcEsc(c.stage || '—') + '</td>' +
+      '<td style="white-space:nowrap;">' + (c.amount ? dcEsc(c.amount) : '—') + '</td>' +
+      '<td><button class="btn btn-xsm btn-outline-primary dc-detail-btn" data-id="' + dcEsc(c.id) + '">Detail</button></td>' +
+      '</tr>';
+  });
+  h += '</tbody></table></div>';
+
+  if (pages > 1) {
+    h += '<div class="dc-pager">' +
+      '<button class="btn btn-xsm btn-outline-secondary" id="dc-prev-page"' + (s.page === 0 ? ' disabled' : '') + '>&laquo; Prev</button>' +
+      '<span class="dc-page-info">Page ' + (s.page + 1) + ' of ' + pages + ' · showing ' + (start + 1) + '–' + Math.min(start + PAGE, rows.length) + ' of ' + rows.length + '</span>' +
+      '<button class="btn btn-xsm btn-outline-secondary" id="dc-next-page"' + (s.page >= pages - 1 ? ' disabled' : '') + '>Next &raquo;</button>' +
+      '</div>';
+  }
+  $('#dc-list').html(h);
+}
+
+function dcKV(k, v) {
+  var val = (v == null || v === '') ? '<span class="text-muted">—</span>' : v;
+  return '<div class="k">' + dcEsc(k) + '</div><div class="v">' + val + '</div>';
+}
+
+function dcShowDetail(id) {
+  var c = dcFindCase(id);
+  if (!c) return;
+  dcDetailCase = c;
+  var b = dcLatestBody(c);
+  var h = '';
+
+  /* Summary */
+  h += '<div class="dc-detail-grid">';
+  h += dcKV('Status', dcStatusBadge(b.status));
+  h += dcKV('Reason', dcEsc(b.reason || ''));
+  h += dcKV('Life cycle stage', dcEsc(b.dispute_life_cycle_stage || ''));
+  h += dcKV('Channel', dcEsc(b.dispute_channel || ''));
+  h += dcKV('Dispute amount', dcAmt(b.dispute_amount));
+  h += dcKV('Created', dcFmtDate(b.create_time || c.created));
+  h += dcKV('Last updated', dcFmtDate(b.update_time || c.updated));
+  if (c.statusSeq && c.statusSeq.indexOf(',') !== -1) h += dcKV('Status history (old→latest)', dcEsc(c.statusSeq));
+  h += '</div>';
+
+  /* Outcome */
+  if (b.dispute_outcome && (b.dispute_outcome.outcome_code || b.dispute_outcome.outcome_reason || b.dispute_outcome.amount_refunded)) {
+    var o = b.dispute_outcome;
+    h += '<div class="dc-sec-title">Outcome</div><div class="dc-detail-grid">';
+    h += dcKV('Outcome code', dcEsc(o.outcome_code || ''));
+    h += dcKV('Outcome reason', dcEsc(o.outcome_reason || ''));
+    if (o.amount_refunded) h += dcKV('Amount refunded', dcAmt(o.amount_refunded));
+    h += '</div>';
+  }
+
+  /* Disputed transactions */
+  var txns = b.disputed_transactions || [];
+  h += '<div class="dc-sec-title">Disputed transaction' + (txns.length === 1 ? '' : 's') + ' (' + txns.length + ')</div>';
+  if (txns.length) {
+    h += '<div style="overflow-x:auto;"><table class="table table-sm table-bordered mb-1" style="font-size:87%;">' +
+      '<thead class="thead-light"><tr><th>Seller Txn ID</th><th>Buyer Txn ID</th><th>Gross amount</th>' +
+      '<th>Txn status</th><th>Invoice</th><th>Txn date</th></tr></thead><tbody>';
+    txns.forEach(function(t) {
+      h += '<tr>' +
+        '<td style="font-family:monospace; font-size:11px;">' + dcEsc(t.seller_transaction_id || '—') + '</td>' +
+        '<td style="font-family:monospace; font-size:11px;">' + dcEsc(t.buyer_transaction_id || '—') + '</td>' +
+        '<td style="white-space:nowrap;">' + (dcAmt(t.gross_amount) || '—') + '</td>' +
+        '<td>' + dcEsc(t.transaction_status || '—') + '</td>' +
+        '<td>' + dcEsc(t.invoice_number || '—') + '</td>' +
+        '<td style="white-space:nowrap;">' + (dcFmtDate(t.create_time) || '—') + '</td>' +
+        '</tr>';
+    });
+    h += '</tbody></table></div>';
+  } else {
+    h += '<p class="text-muted mb-0" style="font-size:88%;">None.</p>';
+  }
+
+  /* Offer */
+  h += '<div class="dc-sec-title">Offer</div>';
+  if (b.offer && (b.offer.offer_type || b.offer.buyer_requested_amount || b.offer.seller_offered_amount)) {
+    var of = b.offer;
+    h += '<div class="dc-detail-grid">';
+    if (of.offer_type) h += dcKV('Offer type', dcEsc(of.offer_type));
+    if (of.buyer_requested_amount) h += dcKV('Buyer requested', dcAmt(of.buyer_requested_amount));
+    if (of.seller_offered_amount) h += dcKV('Seller offered', dcAmt(of.seller_offered_amount));
+    h += '</div>';
+  } else {
+    h += '<p class="text-muted mb-0" style="font-size:88%;">No offer.</p>';
+  }
+
+  /* Submitted evidence */
+  var evs = b.evidences || [];
+  h += '<div class="dc-sec-title">Submitted evidence (' + evs.length + ')</div>';
+  if (evs.length) {
+    h += '<div style="overflow-x:auto;"><table class="table table-sm table-bordered mb-1" style="font-size:87%;">' +
+      '<thead class="thead-light"><tr><th>Type</th><th>Source</th><th>Date</th><th>Notes / info</th></tr></thead><tbody>';
+    evs.forEach(function(e) {
+      var info = e.notes || '';
+      if (!info && e.evidence_info) { try { info = JSON.stringify(e.evidence_info); } catch (x) { info = ''; } }
+      h += '<tr>' +
+        '<td>' + dcEsc(e.evidence_type || '—') + '</td>' +
+        '<td>' + dcEsc(e.source || '—') + '</td>' +
+        '<td style="white-space:nowrap;">' + (dcFmtDate(e.date) || '—') + '</td>' +
+        '<td style="min-width:180px; white-space:normal; word-break:break-word;">' + (info ? dcEsc(info) : '—') + '</td>' +
+        '</tr>';
+    });
+    h += '</tbody></table></div>';
+  } else {
+    h += '<p class="text-muted mb-0" style="font-size:88%;">No evidence submitted.</p>';
+  }
+
+  /* Messages */
+  var msgs = (b.messages || []).slice().sort(function(a, b) { return (a.time_posted || '') < (b.time_posted || '') ? -1 : 1; });
+  if (msgs.length) {
+    h += '<div class="dc-sec-title">Messages (' + msgs.length + ')</div>';
+    msgs.forEach(function(m) {
+      var who = (m.posted_by || '').toUpperCase();
+      var color = who === 'BUYER' ? '#0070ba' : (who === 'SELLER' ? '#59a14f' : '#888');
+      h += '<div class="dc-msg" style="border-left-color:' + color + ';">' +
+        '<div class="dc-msg-meta"><strong>' + dcEsc(m.posted_by || 'Unknown') + '</strong> · ' + dcFmtDate(m.time_posted) + '</div>' +
+        '<div class="dc-msg-body">' + dcEsc(m.content || '') + '</div></div>';
+    });
+  }
+
+  $('#disputeDetailTitle').html('<span class="fa fa-gavel text-danger"></span> <span style="font-family:monospace; font-size:90%;">' + dcEsc(c.id) + '</span>');
+  $('#disputeDetailBody').html(h);
+  $('#disputeDetailModal').modal('show');
+}
+
 /* ── Load data from file picker ── */
 function loadAndRender(allData) {
   if (!allData || !allData.length) {
@@ -3610,6 +3987,51 @@ $(document).ready(function() {
   $('#btnPayerInfo').on('click', showPayerInfo);
   $('#btnDemographics').on('click', showDemographics);
   $('#btnDisputes').on('click', showDisputes);
+
+  /* ── Dispute Calendar events ── */
+  $('#btnDisputeCalendar').on('click', showDisputeCalendar);
+  $('#dc-close').on('click', function() {
+    $('#disputeCalendarPanel').hide();
+    $('body').css('overflow', '');
+  });
+  $(document).on('click', '#dc-prev', function() { dcState.leftMonth.subtract(1, 'month'); dcAfterNav(); });
+  $(document).on('click', '#dc-next', function() { dcState.leftMonth.add(1, 'month'); dcAfterNav(); });
+  $(document).on('click', '#dc-thismonth', function() {
+    dcState.leftMonth = moment().startOf('month').subtract(1, 'month');
+    dcAfterNav();
+  });
+  $(document).on('click', '#disputeCalendarPanel .dc-cell.dc-has', function() {
+    var dt = String($(this).attr('data-date'));
+    dcState.selectedDate = (dcState.selectedDate === dt) ? null : dt;
+    dcState.navEmpty = false;
+    dcState.page = 0;
+    dcRenderCalendar();
+    dcRenderList();
+  });
+  $(document).on('click', '#dc-clear-date, #dc-show-all', function() {
+    dcState.selectedDate = null;
+    dcState.navEmpty = false;
+    dcState.page = 0;
+    dcRenderCalendar();
+    dcRenderList();
+  });
+  $(document).on('input', '#dc-caseid', function() {
+    dcState.caseIdFilter = $(this).val().trim();
+    dcState.page = 0;
+    dcRenderList();
+  });
+  $(document).on('click', '#dc-prev-page', function() {
+    if (dcState.page > 0) { dcState.page--; dcRenderList(); document.getElementById('dc-list').scrollIntoView({ block: 'start' }); }
+  });
+  $(document).on('click', '#dc-next-page', function() {
+    dcState.page++; dcRenderList(); document.getElementById('dc-list').scrollIntoView({ block: 'start' });
+  });
+  $(document).on('click', '.dc-detail-btn', function() { dcShowDetail(String($(this).attr('data-id'))); });
+  $('#btnDisputeDetailRecords').on('click', function() {
+    if (dcDetailCase && dcDetailCase.records && dcDetailCase.records.length) {
+      openFilteredWindow(dcDetailCase.records, 'Dispute ' + dcDetailCase.id + ' — API records');
+    }
+  });
 
   /* Exclude filter events */
   $('#exclude-add-btn').on('click', function() {
