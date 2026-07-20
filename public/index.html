@@ -183,6 +183,7 @@ tr.pie-highlight {
 .dc-cell.dc-selected { outline: 2px solid #0070ba; outline-offset: -1px; background: #cfe0fb; }
 
 .dc-list-head { margin: 22px 0 10px; font-size: 98%; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dc-totals { margin: -4px 0 10px; font-size: 90%; color: #444; background: #f3f6fb; border: 1px solid #dce6f5; border-radius: 6px; padding: 5px 10px; display: inline-block; }
 .dc-pager { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
 .dc-pager .btn { margin: 0; }
 .dc-page-info { font-size: 86%; color: #666; }
@@ -3646,6 +3647,26 @@ function dcFmtDate(t) { if (!t) return ''; try { return moment.utc(t).tz(ianaTim
 function dcDayKey(t) { if (!t) return ''; try { return moment.utc(t).tz(ianaTimezone).format('YYYY-MM-DD'); } catch (e) { return ''; } }
 function dcAmt(a) { if (!a || a.value == null) return ''; return dcEsc(a.value + (a.currency_code ? ' ' + a.currency_code : '')); }
 
+/* Sum each case's latest dispute_amount grouped by currency, returning a
+   "1,234.56 USD · 78.90 EUR" string (currencies sorted). Cases without a
+   numeric amount are skipped. Returns '' when nothing summable. */
+function dcSumAmounts(cases) {
+  var totals = {};
+  cases.forEach(function(c) {
+    var amt = dcLatestBody(c).dispute_amount;
+    if (!amt || amt.value == null) return;
+    var v = parseFloat(amt.value);
+    if (isNaN(v)) return;
+    var cur = amt.currency_code || '(no currency)';
+    totals[cur] = (totals[cur] || 0) + v;
+  });
+  var keys = Object.keys(totals).sort();
+  if (!keys.length) return '';
+  return keys.map(function(cur) {
+    return '<strong>' + totals[cur].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</strong> ' + dcEsc(cur);
+  }).join(' &middot; ');
+}
+
 function dcStatusBadge(st) {
   if (!st) return '<span class="text-muted">—</span>';
   var s = String(st).toUpperCase(), cls = 'secondary';
@@ -3771,6 +3792,12 @@ function dcRenderList() {
   var h = '<div class="dc-list-head">' + heading;
   if (s.selectedDate) h += '<button class="btn btn-xsm btn-outline-secondary" id="dc-clear-date">Show all dates</button>';
   h += '</div>';
+
+  /* Lump-sum dispute amount for the listed cases, grouped by currency (a case
+     with a mixed/absent amount is simply skipped). Summed over the full filtered
+     set, not just the current page. */
+  var totalStr = dcSumAmounts(rows);
+  if (totalStr) h += '<div class="dc-totals">Total dispute amount: ' + totalStr + '</div>';
 
   if (!rows.length) {
     h += '<div class="alert alert-info mb-0">No dispute cases' +
@@ -3994,8 +4021,8 @@ $(document).ready(function() {
     $('#disputeCalendarPanel').hide();
     $('body').css('overflow', '');
   });
-  $(document).on('click', '#dc-prev', function() { dcState.leftMonth.subtract(1, 'month'); dcAfterNav(); });
-  $(document).on('click', '#dc-next', function() { dcState.leftMonth.add(1, 'month'); dcAfterNav(); });
+  $(document).on('click', '#dc-prev', function() { dcState.leftMonth.subtract(2, 'month'); dcAfterNav(); });
+  $(document).on('click', '#dc-next', function() { dcState.leftMonth.add(2, 'month'); dcAfterNav(); });
   $(document).on('click', '#dc-thismonth', function() {
     dcState.leftMonth = moment().startOf('month').subtract(1, 'month');
     dcAfterNav();
