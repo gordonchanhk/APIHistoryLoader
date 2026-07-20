@@ -183,6 +183,7 @@ tr.pie-highlight {
     <button type="button" class="btn btn-sm btn-outline-dark" id="btnApiHealth"><span class="fa fa-heartbeat"></span> API Health</button>
     <button type="button" class="btn btn-sm btn-outline-secondary" id="btnExternalUrls"><span class="fa fa-external-link"></span> External URLs</button>
     <button type="button" class="btn btn-sm btn-outline-primary" id="btnPayerInfo"><span class="fa fa-users"></span> Payer Info</button>
+    <button type="button" class="btn btn-sm btn-outline-info" id="btnDemographics"><span class="fa fa-globe"></span> Demographics</button>
     <button type="button" class="btn btn-sm btn-outline-danger" id="btnDisputes"><span class="fa fa-gavel"></span> Disputes</button>
     <span id="exclude-section">
       <span class="text-muted" style="font-size:90%; margin-right:2px;">Exclude:</span>
@@ -343,6 +344,25 @@ tr.pie-highlight {
       </div>
       <div class="modal-footer" style="padding:6px 10px;">
         <button type="button" class="btn btn-sm btn-outline-info" id="btnExportPayerCsv"><span class="fa fa-download"></span> Export CSV</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Demographics Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="demographicsModal">
+  <div class="modal-dialog" style="max-width:1050px !important; top:40px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" style="margin:0;"><span class="fa fa-globe text-info"></span> Demographics</h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 200px); background-color:#fff;">
+        <div id="demographicsContent"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-info" id="btnExportDemographicsCsv"><span class="fa fa-download"></span> Export CSV</button>
         <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
       </div>
     </div>
@@ -3080,6 +3100,299 @@ function showPayerInfo() {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+ * Demographics — payment-source breakdown of volume (TPV) and acceptance
+ *
+ * For each order (counted once, keyed by order id) we capture the payment
+ * source, order amount/currency (purchase_units[0].amount), card demographics
+ * (payment_source.card.{brand, type, bin_details.{bin_country_code,
+ * issuing_bank}}), and a success / fail / pending outcome. tableItems is
+ * newest-first, so the first non-null value seen for a field wins (= latest).
+ * Card demographic fields only appear on card responses, and bin_details is
+ * often absent — those orders group under "Unknown".
+ *
+ * PayPal (and wallet) sources break down by currency; card breaks down by a
+ * chosen dimension. Note: AUTHORIZE-intent orders are scored on the authorize
+ * outcome; the separate /v2/payments/authorizations/{id}/capture call is not
+ * attributed here (it carries no checkout order id).
+ * ════════════════════════════════════════════════════════════════════════ */
+function buildDemographicsModel() {
+  var createRe   = /^\/v2\/checkout\/orders$/;
+  /* Match any order sub-path (capture / authorize / confirm-payment-source / GET)
+   * so the card-fields + 3DS flow — where card brand/BIN and the PAYER_ACTION
+   * status live on /confirm-payment-source — is attributed to the order. */
+  var orderUrlRe = /\/v2\/checkout\/orders\/([^\/?]+)/;
+
+  /* Terminal outcome beats in-flight: success > fail > pending. A declined
+   * capture (fail) must not be masked by an earlier CREATED/pending record. */
+  var OUT_RANK = { success: 3, fail: 2, pending: 1 };
+  var byId = {};
+
+  tableItems.forEach(function(row) {
+    var url = row.url || '';
+    var method = ((row.api_request && row.api_request.method) || '').toUpperCase();
+    var reqBody = (row.api_request && row.api_request.body) || {};
+    var resBody = (row.api_response && row.api_response.body) || {};
+    var hs = parseInt(row.http_status || (row.api_response && row.api_response.status));
+
+    /* Resolve the checkout order id — only from Orders v2 lifecycle calls, so
+     * vault endpoints (/v3/vault/*) that also carry payment_source.card don't
+     * masquerade as orders. */
+    var oid = null;
+    if (method === 'POST' && createRe.test(url)) oid = resBody.id;
+    else { var m = url.match(orderUrlRe); if (m) oid = m[1]; }
+    if (!oid) return;
+
+    var ps = _psLabel(resBody) || _psLabel(reqBody);
+
+    var o = byId[oid];
+    if (!o) o = byId[oid] = { orderId: oid, src: null, currency: null, amount: null,
+      brand: null, type: null, binCountry: null, issuingBank: null,
+      outcome: null, attempted: false, records: [] };
+    o.records.push(row);
+
+    if (!o.src && ps) o.src = ps.src;
+
+    /* amount / currency from purchase_units[0].amount — check response then
+     * request (card-fields create responses omit purchase_units; the amount is
+     * only in the request body). */
+    [resBody, reqBody].forEach(function(b) {
+      if (o.amount != null) return;
+      try {
+        var amt = b.purchase_units && b.purchase_units[0] && b.purchase_units[0].amount;
+        if (amt && amt.value != null) {
+          var v = parseFloat(amt.value);
+          if (!isNaN(v)) { o.amount = v; o.currency = amt.currency_code || null; }
+        }
+      } catch (e) {}
+    });
+
+    /* card demographics from payment_source.card — check response then request
+     * (bin_details / brand arrive on the /confirm-payment-source response). */
+    [resBody, reqBody].forEach(function(b) {
+      try {
+        var card = b.payment_source && b.payment_source.card;
+        if (!card) return;
+        if (!o.brand && card.brand) o.brand = card.brand;
+        if (!o.type && card.type) o.type = card.type;
+        var bd = card.bin_details;
+        if (bd) {
+          if (!o.binCountry && bd.bin_country_code) o.binCountry = bd.bin_country_code;
+          if (!o.issuingBank && bd.issuing_bank) o.issuingBank = bd.issuing_bank;
+        }
+      } catch (e) {}
+    });
+
+    /* Outcome, only from a real capture/authorize attempt (best-wins per order).
+     * A capture/authorize call, a terminal COMPLETED/VOIDED, or a create/capture
+     * HTTP error counts as an attempt. In-flight order statuses (CREATED,
+     * APPROVED, SAVED, PAYER_ACTION_REQUIRED) are NOT attempts — an order that
+     * only ever reaches those was created but never captured, tracked separately
+     * (o.attempted stays false) rather than being called "pending". Genuine
+     * capture PENDING (e.g. eCheck / under review) is the only real pending. */
+    function normOf(oc) { return (oc === 'completed' || oc === 'authorized') ? 'success' : (oc === 'pending' ? 'pending' : 'fail'); }
+    var capSt = _puFirst(resBody, 'captures', 'status');
+    var authSt = _puFirst(resBody, 'authorizations', 'status');
+    var norm = null;
+    if (capSt != null || /\/capture$/.test(url)) norm = normOf(_captureOutcome(hs, capSt));
+    else if (authSt != null || /\/authorize$/.test(url)) norm = normOf(_authorizeOutcome(hs, authSt));
+    else if (resBody.status === 'COMPLETED') norm = 'success';
+    else if (resBody.status === 'VOIDED') norm = 'fail';
+    else if (method === 'POST' && createRe.test(url) && hs >= 400) norm = 'fail';
+    if (norm) {
+      o.attempted = true;
+      if (!o.outcome || OUT_RANK[norm] > OUT_RANK[o.outcome]) o.outcome = norm;
+    }
+  });
+
+  /* Only orders with a resolved payment source are demographic subjects */
+  return Object.keys(byId).map(function(id) { return byId[id]; })
+    .filter(function(o) { return o.src; });
+}
+
+/* ── Demographics analysis ── */
+function showDemographics() {
+  var orders = buildDemographicsModel();
+
+  if (!orders.length) {
+    $('#demographicsContent').html('<div class="alert alert-info mb-0">No payment-source data found. ' +
+      'This view breaks orders down by <code>payment_source</code> — PayPal by currency; card by ' +
+      'brand / type / BIN country / issuing bank.</div>');
+    $('#demographicsModal').modal('show');
+    return;
+  }
+
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function addTotals(into, from) { Object.keys(from).forEach(function(c) { into[c] = (into[c] || 0) + from[c]; }); return into; }
+  function totalsStr(t) { return Object.keys(t).sort().map(function(c) { return t[c].toFixed(2) + ' ' + c; }).join('; '); }
+  function totalsHtml(t) { return Object.keys(t).length ? totalsStr(t).replace(/; /g, '<br>') : '<span class="text-muted">—</span>'; }
+
+  /* Payment sources present, most common first */
+  var srcCounts = {};
+  orders.forEach(function(o) { srcCounts[o.src] = (srcCounts[o.src] || 0) + 1; });
+  var sources = Object.keys(srcCounts).sort(function(a, b) { return srcCounts[b] - srcCounts[a]; });
+
+  var DIMS = [
+    { key: 'brand',       label: 'Card brand',   field: 'brand' },
+    { key: 'type',        label: 'Card type',    field: 'type' },
+    { key: 'binCountry',  label: 'BIN country',  field: 'binCountry' },
+    { key: 'issuingBank', label: 'Issuing bank', field: 'issuingBank' }
+  ];
+  function dimDef() { for (var i = 0; i < DIMS.length; i++) if (DIMS[i].key === dim) return DIMS[i]; return DIMS[0]; }
+
+  var src = sources[0];   /* selected payment source */
+  var dim = 'brand';      /* selected card dimension */
+  var drill = {};
+
+  /* Bucket an order: notcap = created but capture never attempted (abandoned);
+   * otherwise its success / fail / pending outcome. */
+  function bucketOf(o) { return !o.attempted ? 'notcap' : (o.outcome || 'pending'); }
+
+  /* Group current-source orders by the active factor */
+  function groupData() {
+    var isCard = (src === 'card');
+    var factorLabel = isCard ? dimDef().label : 'Currency';
+    var subset = orders.filter(function(o) { return o.src === src; });
+    var groups = {};
+    var anyPending = false;
+    subset.forEach(function(o) {
+      var k = isCard ? (o[dimDef().field] || 'Unknown') : (o.currency || 'Unknown');
+      var g = groups[k] || (groups[k] = { orders: [], success: 0, fail: 0, pending: 0, notcap: 0, attempted: {}, successful: {} });
+      g.orders.push(o);
+      var bucket = bucketOf(o);
+      g[bucket]++;
+      if (bucket === 'pending') anyPending = true;
+      /* Attempted TPV = volume where a capture/authorize was actually attempted
+       * (success/fail/pending). Not-captured (abandoned) orders are excluded. */
+      if (o.amount != null && o.currency && bucket !== 'notcap') {
+        g.attempted[o.currency] = (g.attempted[o.currency] || 0) + o.amount;
+        if (bucket === 'success') g.successful[o.currency] = (g.successful[o.currency] || 0) + o.amount;
+      }
+    });
+    return { groups: groups, factorLabel: factorLabel, anyPending: anyPending };
+  }
+
+  function summaryHtml() {
+    var pp = srcCounts['paypal'] || 0, cd = srcCounts['card'] || 0;
+    var other = orders.length - pp - cd;
+    return '<p class="mb-2" style="font-size:90%;"><strong>' + orders.length + '</strong> classified order(s): ' +
+      '<span class="badge badge-primary">PayPal ' + pp + '</span> ' +
+      '<span class="badge badge-info">Card ' + cd + '</span>' +
+      (other ? ' <span class="badge badge-secondary">Other ' + other + '</span>' : '') + '</p>';
+  }
+
+  function toolbarHtml() {
+    function btn(group, val, cur, label, count) {
+      return '<button type="button" class="btn btn-sm ' + (cur === val ? 'btn-primary' : 'btn-outline-primary') +
+        ' demo-' + group + '" data-val="' + esc(val) + '">' + label +
+        (count != null ? ' <span style="opacity:.7;">(' + count + ')</span>' : '') + '</button>';
+    }
+    var h = '<div class="d-flex flex-wrap" style="gap:16px; margin-bottom:12px;">';
+    h += '<div><span class="text-muted mr-1" style="font-size:85%;">Payment source:</span><div class="btn-group btn-group-sm">';
+    sources.forEach(function(s) { h += btn('src', s, src, esc(s), srcCounts[s]); });
+    h += '</div></div>';
+    if (src === 'card') {
+      h += '<div><span class="text-muted mr-1" style="font-size:85%;">Break down by:</span><div class="btn-group btn-group-sm">';
+      DIMS.forEach(function(d) { h += btn('dim', d.key, dim, d.label); });
+      h += '</div></div>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function render() {
+    drill = {};
+    var gd = groupData();
+    var groups = gd.groups;
+    var showPending = gd.anyPending;   /* Pending column only when a real pending exists */
+    var keys = Object.keys(groups).sort(function(a, b) { return groups[b].orders.length - groups[a].orders.length; });
+
+    var html = summaryHtml() + toolbarHtml();
+    var tot = { success: 0, fail: 0, pending: 0, notcap: 0 }, totAttempted = {}, totSuccessful = {};
+    var slices = [];
+
+    /* Outcome columns to render (pending only when present) */
+    var cols = [{ key: 'success', label: 'Success', color: '#28a745' },
+                { key: 'fail', label: 'Fail', color: '#dc3545' }];
+    if (showPending) cols.push({ key: 'pending', label: 'Pending', color: '#e6a800' });
+    cols.push({ key: 'notcap', label: 'Not captured', color: '#6c757d' });
+
+    html += '<div style="display:flex; gap:20px; align-items:flex-start;">';
+    html += '<div style="flex:1; min-width:0;">';
+    html += '<table class="table table-sm table-bordered table-striped mb-0" style="font-size:92%;"><thead class="thead-light"><tr>' +
+      '<th>' + esc(gd.factorLabel) + '</th>';
+    cols.forEach(function(c) { html += '<th style="text-align:center; width:' + (c.key === 'notcap' ? '92' : '74') + 'px;">' + c.label + '</th>'; });
+    html += '<th style="text-align:right; width:150px;">Attempted TPV</th>' +
+      '<th style="text-align:right; width:150px;">Successful TPV</th></tr></thead><tbody>';
+
+    function recsOf(g, bucket) {
+      var recs = [];
+      g.orders.forEach(function(o) { if (bucketOf(o) === bucket) recs = recs.concat(o.records); });
+      return recs;
+    }
+    function cnt(c, dk, color) {
+      if (!c) return '<span class="text-muted">0</span>';
+      return '<a href="javascript:void(0);" class="demo-drill font-weight-bold" data-key="' + esc(dk) +
+        '" style="text-decoration:none; color:' + color + ';">' + c + '</a>';
+    }
+
+    keys.forEach(function(k, i) {
+      var g = groups[k];
+      var color = PIE_COLORS[i % PIE_COLORS.length];
+      slices.push({ label: k, value: g.orders.length, color: color });
+      cols.forEach(function(c) { tot[c.key] += g[c.key]; });
+      addTotals(totAttempted, g.attempted); addTotals(totSuccessful, g.successful);
+
+      html += '<tr>' +
+        '<td><span style="display:inline-block;width:10px;height:10px;background:' + color + ';margin-right:5px;vertical-align:middle;border-radius:1px;"></span>' + esc(k) + '</td>';
+      cols.forEach(function(c) {
+        var dk = 'g|' + k + '|' + c.key;
+        drill[dk] = recsOf(g, c.key);
+        html += '<td style="text-align:center;">' + cnt(g[c.key], dk, c.color) + '</td>';
+      });
+      html += '<td style="text-align:right; white-space:nowrap;">' + totalsHtml(g.attempted) + '</td>' +
+        '<td style="text-align:right; white-space:nowrap;">' + totalsHtml(g.successful) + '</td></tr>';
+    });
+
+    html += '<tr class="table-secondary font-weight-bold"><td>Total</td>';
+    cols.forEach(function(c) { html += '<td style="text-align:center;">' + tot[c.key] + '</td>'; });
+    html += '<td style="text-align:right; white-space:nowrap;">' + totalsHtml(totAttempted) + '</td>' +
+      '<td style="text-align:right; white-space:nowrap;">' + totalsHtml(totSuccessful) + '</td></tr>';
+    html += '</tbody></table>';
+    html += '<p class="text-muted mt-1 mb-0" style="font-size:84%;">Click a count to view those records in a new window. ' +
+      '<em>Not captured</em> = order created but no capture/authorize attempted (e.g. checkout or 3DS abandoned); ' +
+      'excluded from Attempted TPV.</p>';
+    html += '</div>';
+    html += '<div style="flex:0 0 200px;"><canvas id="demoPie" width="200" height="200"></canvas></div>';
+    html += '</div>';
+
+    $('#demographicsContent').html(html);
+    renderPieChart({ canvasId: 'demoPie', $container: $('#demographicsContent'), slices: slices });
+  }
+
+  $('#demographicsContent').off('click', '.demo-src').on('click', '.demo-src', function() { src = $(this).data('val'); render(); });
+  $('#demographicsContent').off('click', '.demo-dim').on('click', '.demo-dim', function() { dim = $(this).data('val'); render(); });
+  $('#demographicsContent').off('click', '.demo-drill').on('click', '.demo-drill', function() {
+    var recs = drill[$(this).data('key')] || [];
+    if (recs.length) openFilteredWindow(recs, 'Demographics');
+  });
+
+  $('#btnExportDemographicsCsv').off('click').on('click', function() {
+    var gd = groupData();
+    var keys = Object.keys(gd.groups).sort(function(a, b) { return gd.groups[b].orders.length - gd.groups[a].orders.length; });
+    var rows = keys.map(function(k) {
+      var g = gd.groups[k];
+      return [k, g.success, g.fail, g.pending, g.notcap, totalsStr(g.attempted), totalsStr(g.successful)];
+    });
+    var tag = (src === 'card') ? 'card_' + dim : src;
+    downloadCsv('demographics_' + tag + '.csv',
+      [gd.factorLabel, 'Success', 'Fail', 'Pending', 'Not captured', 'Attempted TPV', 'Successful TPV'], rows);
+  });
+
+  render();
+  $('#demographicsModal').modal('show');
+}
+
+/* ════════════════════════════════════════════════════════════════════════
  * Dispute Case Summary
  *
  * Merchants GET /v1/customer/disputes/{id} repeatedly over a case's life. We
@@ -3295,6 +3608,7 @@ $(document).ready(function() {
   $('#btnApiHealth').on('click', showApiHealth);
   $('#btnExternalUrls').on('click', showExternalUrls);
   $('#btnPayerInfo').on('click', showPayerInfo);
+  $('#btnDemographics').on('click', showDemographics);
   $('#btnDisputes').on('click', showDisputes);
 
   /* Exclude filter events */
