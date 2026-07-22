@@ -1771,11 +1771,38 @@ function _declineCode(body) {
 /* Best-effort human labels for common PayPal processor response codes. Unknown
  * codes are shown bare (no guessing). See PayPal "Processor response codes" docs. */
 var PROCESSOR_RESPONSE_CODES = {
-  '0000': 'Approved', '00N7': 'CVV2 failure', '0500': 'Do not honor',
-  '0R00': 'Customer cancelled', '5100': 'Generic decline', '5120': 'Insufficient funds',
-  '5180': 'Invalid or restricted card', '5400': 'Expired card', '5650': 'Declined due to risk',
-  '9100': 'Declined by issuer', '9500': 'Suspected fraud', '9510': 'Suspected fraud (risk)',
-  '9520': 'Lost or stolen card'
+  '0000': 'Approved',
+  '00N7': 'CVV2 failure',
+  '0500': 'Do not honor',
+  '0R00': 'Customer cancelled',
+  '1312': 'INVALID_TRANSACTION_CARD_ISSUER_ACQUIRER',
+  '1330': 'INVALID_ACCOUNT',
+  '1340': 'INVALID_TERMINAL',
+  '1350': 'INVALID_MERCHANT',
+  '1352': 'RESTRICTED_OR_INACTIVE_ACCOUNT',
+  '5100': 'Generic decline',
+  '5110': 'CVV2_FAILURE',
+  '5120': 'Insufficient funds',
+  '5135': 'DECLINED_PIN_TRY_EXCEEDED',
+  '5150': 'PICKUP_CARD_SPECIAL_CONDITIONS',
+  '5180': 'Invalid or restricted card',
+  '5210': 'INVALID_TRANSACTION',
+  '5400': 'Expired card',
+  '5650': 'Declined due to risk',
+  '5700': 'Outside of scope of accepted business',
+  '5710': 'TX_ATTEMPTS_EXCEED_LIMIT',
+  '5930': 'CARD_NOT_ACTIVATED',
+  '5950': 'DECLINED_DUE_TO_UPDATED_ACCOUNT',
+  '9100': 'Declined by issuer',
+  '9500': 'Suspected fraud',
+  '9530': 'The merchant must call the number on the back of the card',
+  '9510': 'Suspected fraud (risk)',
+  '9520': 'Lost or stolen card',
+  'PP06': 'ACCOUNT_CLOSED',
+  'PPRN': 'REATTEMPT_NOT_PERMITTED',
+  'PPAX': 'AMOUNT_EXCEEDED',
+  'PPDT': 'DECLINE_THRESHOLD_BREACH',
+  'PPAB': 'ACCOUNT_BLOCKED_BY_ISSUER'
 };
 function processorCodeLabel(code) {
   var d = PROCESSOR_RESPONSE_CODES[code];
@@ -2141,6 +2168,7 @@ function showCaptureAnalysis() {
 
   var drill = {};
   var sectionIdx = 0;
+  var selectedPS = {}; /* payment sources currently toggled on to filter the reason breakdown below */
 
   /* Aggregate items by payment source into outcome counts + drill records */
   function aggregate(items, keys) {
@@ -2170,6 +2198,13 @@ function showCaptureAnalysis() {
       if (!c) return '<span class="text-muted">0</span>';
       return '<a href="javascript:void(0);" class="cap-drill font-weight-bold" data-key="' + key + '" style="text-decoration:none;">' + c + '</a>' + pct(c, t);
     }
+    function declinedCell(c, t, src) {
+      if (!c) return '<span class="text-muted">0</span>';
+      var active = selectedPS[src] ? ' cap-ps-active' : '';
+      var esc = String(src).replace(/"/g, '&quot;');
+      return '<a href="javascript:void(0);" class="cap-ps-toggle font-weight-bold' + active + '" data-ps="' + esc +
+        '" title="Click to filter the reason breakdown below to this payment source (click again to remove, multi-select supported)" style="text-decoration:none;">' + c + '</a>' + pct(c, t);
+    }
 
     var h = '<h6 class="mb-1">' + opts.icon + ' ' + opts.title + '</h6>';
     h += '<p class="mb-2" style="font-size:90%;">' + opts.rateText(agg.totals) + '</p>';
@@ -2189,7 +2224,8 @@ function showCaptureAnalysis() {
       opts.keys.forEach(function(k) {
         var dk = 'sec' + sIdx + '|' + src + '|' + k;
         drill[dk] = s[k + 'R'];
-        h += '<td style="text-align:center; color:' + opts.colors[k] + ';">' + cell(s[k], s.total, dk) + '</td>';
+        var cellHtml = (k === 'declined') ? declinedCell(s[k], s.total, src) : cell(s[k], s.total, dk);
+        h += '<td style="text-align:center; color:' + opts.colors[k] + ';">' + cellHtml + '</td>';
       });
       h += '<td style="text-align:center;"><strong>' + s.total + '</strong></td></tr>';
     });
@@ -2198,7 +2234,7 @@ function showCaptureAnalysis() {
     opts.keys.forEach(function(k) { h += '<td style="text-align:center; color:' + opts.colors[k] + ';">' + agg.totals[k] + pct(agg.totals[k], agg.totals.total) + '</td>'; });
     h += '<td style="text-align:center;">' + agg.totals.total + '</td></tr>';
     h += '</tbody></table>';
-    h += '<p class="text-muted mt-1 mb-0" style="font-size:84%;">Click a count to view those records in a new window.</p>';
+    h += '<p class="text-muted mt-1 mb-0" style="font-size:84%;">Click a count to view those records in a new window. Click a <strong>Declined</strong> count to filter the reason breakdown below to that payment source (click again to remove, multi-select supported).</p>';
     h += '</div>';
     h += '<div style="flex:0 0 200px; position:sticky; top:0;"><canvas id="' + canvasId + '" width="200" height="200"></canvas></div>';
     h += '</div>';
@@ -2234,7 +2270,10 @@ function showCaptureAnalysis() {
   }
 
   var pendingCharts = [];
-  var html = '';
+  var html = '<style>' +
+    '#captureAnalysisContent .cap-ps-toggle { padding:1px 6px; border-radius:3px; border:1px solid transparent; }' +
+    '#captureAnalysisContent .cap-ps-toggle.cap-ps-active { background:#dc3545; color:#fff !important; border-color:#a71d2a; }' +
+    '</style>';
 
   if (capItems.length) {
     var secA = renderSection({ title: 'intent:CAPTURE — capture acceptance', icon: '<span class="fa fa-credit-card text-success"></span>',
@@ -2257,7 +2296,7 @@ function showCaptureAnalysis() {
 
   /* ── Failure breakdown: Declined (issuer/risk) vs Error (technical/integration) ── */
   var declinedMap = {}, errorMap = {};
-  function classifyFail(row) {
+  function classifyFail(row, ps) {
     var hs = parseInt(row.http_status || (row.api_response && row.api_response.status));
     var body = (row.api_response && row.api_response.body) || {};
     /* Prefer the capture/authorization status over the order-level body.status,
@@ -2280,16 +2319,19 @@ function showCaptureAnalysis() {
     }
     var target = isDeclined ? declinedMap : errorMap;
     var label = isDeclined ? issue : (issue + ' (HTTP ' + (hs || '?') + ')');
-    if (!target[label]) target[label] = { count: 0, records: [], code: procCode };
+    if (!target[label]) target[label] = { count: 0, records: [], code: procCode, bySrc: {} };
     target[label].count++; target[label].records.push(row);
+    if (!target[label].bySrc[ps]) target[label].bySrc[ps] = { count: 0, records: [] };
+    target[label].bySrc[ps].count++; target[label].bySrc[ps].records.push(row);
   }
   Object.keys(orders).forEach(function(oid) {
     var o = orders[oid];
-    o.records.captures.forEach(classifyFail);
-    o.records.authorizes.forEach(classifyFail);
-    o.records.authCaptures.forEach(classifyFail);
+    var ps = psDisplay(o);
+    o.records.captures.forEach(function(row) { classifyFail(row, ps); });
+    o.records.authorizes.forEach(function(row) { classifyFail(row, ps); });
+    o.records.authCaptures.forEach(function(row) { classifyFail(row, ps); });
   });
-  model.orphanAuthCaptures.forEach(function(x) { classifyFail(x.row); });
+  model.orphanAuthCaptures.forEach(function(x) { classifyFail(x.row, '(unknown)'); });
 
   function failTable(map, title, headColor, drillPrefix) {
     var keys = Object.keys(map).sort(function(a, b) { return map[b].count - map[a].count; });
@@ -2315,9 +2357,34 @@ function showCaptureAnalysis() {
     return h;
   }
 
-  var failHtml = failTable(declinedMap, 'declined by issuer / risk (by reason)', '#dc3545', 'decl') +
-                 failTable(errorMap, 'technical / integration error(s) (by reason)', '#8b1a1a', 'err');
-  if (failHtml) html += '<hr style="margin:16px 0 12px;">' + failHtml;
+  /* Filter a fail map down to the currently-selected payment source(s), if any */
+  function filterFailMap(map) {
+    var srcs = Object.keys(selectedPS);
+    if (!srcs.length) return map;
+    var out = {};
+    Object.keys(map).forEach(function(k) {
+      var bySrc = map[k].bySrc || {};
+      var count = 0, records = [];
+      srcs.forEach(function(s) {
+        if (bySrc[s]) { count += bySrc[s].count; records = records.concat(bySrc[s].records); }
+      });
+      if (count) out[k] = { count: count, records: records, code: map[k].code };
+    });
+    return out;
+  }
+
+  function renderFailSection() {
+    var srcs = Object.keys(selectedPS);
+    var note = srcs.length
+      ? '<p class="mb-2" style="font-size:85%;"><span class="fa fa-filter"></span> Filtered to payment source' + (srcs.length > 1 ? 's' : '') +
+        ': <strong>' + srcs.join(', ') + '</strong> &nbsp;<a href="javascript:void(0);" id="capClearPsFilter">(clear filter)</a></p>'
+      : '';
+    return note + failTable(filterFailMap(declinedMap), 'declined by issuer / risk (by reason)', '#dc3545', 'decl') +
+                  failTable(filterFailMap(errorMap), 'technical / integration error(s) (by reason)', '#8b1a1a', 'err');
+  }
+
+  var hasFailData = Object.keys(declinedMap).length || Object.keys(errorMap).length;
+  if (hasFailData) html += '<hr style="margin:16px 0 12px;">' + '<div id="capFailSection">' + renderFailSection() + '</div>';
 
   $('#captureAnalysisContent').html(html);
 
@@ -2328,6 +2395,22 @@ function showCaptureAnalysis() {
   $('#captureAnalysisContent').off('click', '.cap-drill').on('click', '.cap-drill', function() {
     var recs = drill[$(this).data('key')] || [];
     if (recs.length) openFilteredWindow(recs, 'Capture Analysis');
+  });
+
+  $('#captureAnalysisContent').off('click', '.cap-ps-toggle').on('click', '.cap-ps-toggle', function(e) {
+    e.stopPropagation();
+    var ps = $(this).data('ps');
+    if (selectedPS[ps]) delete selectedPS[ps]; else selectedPS[ps] = true;
+    $('#captureAnalysisContent .cap-ps-toggle').each(function() {
+      $(this).toggleClass('cap-ps-active', !!selectedPS[$(this).data('ps')]);
+    });
+    $('#capFailSection').html(renderFailSection());
+  });
+
+  $('#captureAnalysisContent').off('click', '#capClearPsFilter').on('click', '#capClearPsFilter', function() {
+    selectedPS = {};
+    $('#captureAnalysisContent .cap-ps-toggle').removeClass('cap-ps-active');
+    $('#capFailSection').html(renderFailSection());
   });
 
   /* CSV export: one block per section + failure reasons */
