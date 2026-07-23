@@ -162,6 +162,15 @@ tr.pie-highlight {
 .dc-cal-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .dc-cal-nav .btn { margin: 0; }
 .dc-cal-range { font-weight: 600; font-size: 106%; margin: 0 6px; }
+.dc-status-toggle { display: inline-flex; border: 1px solid #ccc; border-radius: 4px; overflow: hidden; }
+.dc-status-btn { padding: 3px 10px; font-size: 88%; color: #555; text-decoration: none; background: #fff; }
+.dc-status-btn:hover { background: #f0f0f0; text-decoration: none; }
+.dc-status-btn + .dc-status-btn { border-left: 1px solid #ccc; }
+.dc-status-btn.dc-status-active[data-status="all"] { background: #1546a0; color: #fff; font-weight: 600; }
+.dc-status-btn.dc-status-active[data-status="RESOLVED"] { background: #28a745; color: #fff; font-weight: 600; }
+.dc-status-btn.dc-status-active[data-status="UNRESOLVED"] { background: #e0781e; color: #fff; font-weight: 600; }
+.dc-count.dc-count-resolved { background: #28a745; }
+.dc-count.dc-count-unresolved { background: #e0781e; }
 .dc-cal-hint { font-size: 84%; color: #888; margin-left: auto; }
 .dc-months { display: flex; gap: 26px; flex-wrap: wrap; }
 .dc-month { flex: 1 1 340px; min-width: 300px; }
@@ -195,8 +204,30 @@ tr.pie-highlight {
 .dc-msg { border-left: 3px solid #888; padding: 2px 10px; margin-bottom: 7px; }
 .dc-msg-meta { font-size: 80%; color: #666; margin-bottom: 1px; }
 .dc-msg-body { font-size: 89%; white-space: pre-wrap; word-break: break-word; }
+
+/* ── Subscription Analysis (full-page panel) — same look as Dispute Calendar ── */
+#subAnalysisPanel {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  width: 100%; height: 100%; background: #fff; z-index: 1035; overflow-y: auto;
+}
+#subAnalysisPanel .dc-panel-header { background-image: linear-gradient(100deg, #59a14f, #2c6e2f); }
+.sa-status-toggle { display: inline-flex; border: 1px solid #ccc; border-radius: 4px; overflow: hidden; }
+.sa-status-btn { padding: 3px 10px; font-size: 88%; color: #555; text-decoration: none; background: #fff; }
+.sa-status-btn:hover { background: #f0f0f0; text-decoration: none; }
+.sa-status-btn.sa-status-active { background: #2c6e2f; color: #fff; font-weight: 600; }
+.sa-status-btn + .sa-status-btn { border-left: 1px solid #ccc; }
+.dc-count.sa-count-active { background: #28a745; }
+.sa-summary { margin: 0 0 16px; font-size: 90%; color: #333; background: #f3f6fb; border: 1px solid #dce6f5; border-radius: 6px; padding: 10px 14px; }
+.sa-summary strong.sa-big { font-size: 118%; }
+.sa-fp-title { font-weight: 600; margin: 4px 0 8px; font-size: 99%; }
+.sa-fp-toggle {
+  display: inline-block; padding: 2px 9px; border-radius: 4px; border: 1px solid transparent;
+  text-decoration: none; font-weight: bold; cursor: pointer;
+}
+.sa-fp-toggle.sa-fp-active { background: #e15759; color: #fff !important; border-color: #b23; }
 </style>
 </head>
+
 <body>
 
 <header>
@@ -238,6 +269,7 @@ tr.pie-highlight {
     <button type="button" class="btn btn-sm btn-outline-info" id="btnDemographics"><span class="fa fa-globe"></span> Demographics</button>
     <button type="button" class="btn btn-sm btn-outline-danger" id="btnDisputes"><span class="fa fa-gavel"></span> Disputes</button>
     <button type="button" class="btn btn-sm btn-outline-danger" id="btnDisputeCalendar"><span class="fa fa-calendar"></span> Dispute Calendar</button>
+    <button type="button" class="btn btn-sm btn-outline-success" id="btnSubscriptionAnalysis"><span class="fa fa-refresh"></span> Subscriptions</button>
     <span id="exclude-section">
       <span class="text-muted" style="font-size:90%; margin-right:2px;">Exclude:</span>
       <input type="text" id="exclude-input" class="form-control form-control-sm d-inline-block" placeholder="path or keyword">
@@ -487,6 +519,40 @@ tr.pie-highlight {
       </div>
       <div class="modal-footer" style="padding:6px 10px;">
         <button type="button" class="btn btn-sm btn-outline-info" id="btnExportExternalCsv"><span class="fa fa-download"></span> Export CSV</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Subscription Analysis (full-page panel) -->
+<div id="subAnalysisPanel" style="display:none;">
+  <div class="dc-panel-header">
+    <span class="dc-panel-title"><span class="fa fa-refresh"></span> Subscription Analysis</span>
+    <input type="text" id="sa-idfilter" class="form-control form-control-sm dc-caseid-input" placeholder="Filter by subscription ID…" autocomplete="off">
+    <button type="button" class="btn btn-sm btn-outline-light" id="btnExportSubCsv"><span class="fa fa-download"></span> Export CSV</button>
+    <button type="button" class="btn btn-sm btn-light" id="sa-close"><span class="fa fa-times"></span> Close</button>
+  </div>
+  <div class="dc-panel-body">
+    <div id="sa-summary"></div>
+    <div id="sa-calendar"></div>
+    <div id="sa-list"></div>
+  </div>
+</div>
+
+<!-- Subscription Detail Modal -->
+<div class="modal fade" tabindex="-1" role="dialog" id="subDetailModal">
+  <div class="modal-dialog" style="max-width:900px !important; top:24px;">
+    <div class="modal-content">
+      <div class="modal-header" style="display:flex !important; padding:10px 15px !important;">
+        <h5 class="modal-title" id="subDetailTitle" style="margin:0;"></h5>
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button>
+      </div>
+      <div class="modal-body" style="padding:15px; max-height:calc(100vh - 160px); background-color:#fff;">
+        <div id="subDetailBody"></div>
+      </div>
+      <div class="modal-footer" style="padding:6px 10px;">
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="btnSubDetailRecords"><span class="fa fa-list"></span> View API records</button>
         <button type="button" class="btn btn-sm btn-outline-secondary" data-dismiss="modal">Close</button>
       </div>
     </div>
@@ -3606,6 +3672,8 @@ function buildDisputeModel() {
     try { var amt = latest.dispute_amount; if (amt && amt.value != null) d.amount = amt.value + (amt.currency_code ? ' ' + amt.currency_code : ''); } catch (e) {}
     d.reason = latest.reason || '';
     d.stage = latest.dispute_life_cycle_stage || '';
+    d.status = latest.status || '';
+    d.isResolved = !!(d.status && String(d.status).toUpperCase().indexOf('RESOLVED') !== -1);
     d.created = latest.create_time || (d.snaps[0] && d.snaps[0].t) || '';
     d.updated = latest.update_time || d.snaps[d.snaps.length - 1].t || '';
 
@@ -3769,7 +3837,9 @@ function dcFindCase(id) { for (var i = 0; i < dcState.cases.length; i++) { if (d
 function dcVisibleDisputeDates() {
   var lo = dcState.leftMonth.clone().startOf('month').format('YYYY-MM-DD');
   var hi = dcState.leftMonth.clone().add(1, 'month').endOf('month').format('YYYY-MM-DD');
-  return Object.keys(dcState.counts).filter(function(k) { return k >= lo && k <= hi; }).sort();
+  var counts = dcState.statusFilter === 'RESOLVED' ? dcState.resolvedCounts :
+    (dcState.statusFilter === 'UNRESOLVED' ? dcState.unresolvedCounts : dcState.counts);
+  return Object.keys(counts).filter(function(k) { return k >= lo && k <= hi; }).sort();
 }
 
 /* Run after a month change (prev/next/this-month): clear any prior selection and
@@ -3792,7 +3862,14 @@ function showDisputeCalendar() {
   cases.sort(function(a, b) { return a.created < b.created ? 1 : (a.created > b.created ? -1 : 0); }); /* newest first */
 
   var counts = {};
-  cases.forEach(function(c) { if (c.createdKey) counts[c.createdKey] = (counts[c.createdKey] || 0) + 1; });
+  var resolvedCounts = {};
+  var unresolvedCounts = {};
+  cases.forEach(function(c) {
+    if (!c.createdKey) return;
+    counts[c.createdKey] = (counts[c.createdKey] || 0) + 1;
+    if (c.isResolved) resolvedCounts[c.createdKey] = (resolvedCounts[c.createdKey] || 0) + 1;
+    else unresolvedCounts[c.createdKey] = (unresolvedCounts[c.createdKey] || 0) + 1;
+  });
 
   /* Anchor the right-hand month on the most recent dispute (or the current
      month if there is no data), so the newest activity is visible on open. */
@@ -3803,6 +3880,9 @@ function showDisputeCalendar() {
   dcState = {
     cases: cases,
     counts: counts,
+    resolvedCounts: resolvedCounts,
+    unresolvedCounts: unresolvedCounts,
+    statusFilter: 'all',   /* 'all' | 'RESOLVED' | 'UNRESOLVED' — which count the calendar shows and the list scopes to */
     leftMonth: anchor.clone().subtract(1, 'month'),
     selectedDate: null,
     caseIdFilter: '',
@@ -3820,17 +3900,20 @@ function showDisputeCalendar() {
 function dcMonthGrid(m) {
   var firstDow = m.day();               /* 0 Sun … 6 Sat */
   var daysInMonth = m.daysInMonth();
+  var filter = dcState.statusFilter;
+  var counts = filter === 'RESOLVED' ? dcState.resolvedCounts : (filter === 'UNRESOLVED' ? dcState.unresolvedCounts : dcState.counts);
+  var countCls = 'dc-count' + (filter === 'RESOLVED' ? ' dc-count-resolved' : (filter === 'UNRESOLVED' ? ' dc-count-unresolved' : ''));
   var h = '<div class="dc-month"><div class="dc-month-title">' + m.format('MMMM YYYY') + '</div><div class="dc-grid">';
   ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(function(d) { h += '<div class="dc-dow">' + d + '</div>'; });
   for (var i = 0; i < firstDow; i++) h += '<div class="dc-cell dc-empty"></div>';
   for (var day = 1; day <= daysInMonth; day++) {
     var key = m.clone().date(day).format('YYYY-MM-DD');
-    var cnt = dcState.counts[key] || 0;
+    var cnt = counts[key] || 0;
     var cls = 'dc-cell';
     if (cnt > 0) cls += ' dc-has';
     if (dcState.selectedDate === key) cls += ' dc-selected';
     h += '<div class="' + cls + '" data-date="' + key + '"><span class="dc-daynum">' + day + '</span>' +
-         (cnt > 0 ? '<span class="dc-count">' + cnt + '</span>' : '') + '</div>';
+         (cnt > 0 ? '<span class="' + countCls + '">' + cnt + '</span>' : '') + '</div>';
   }
   return h + '</div></div>';
 }
@@ -3838,11 +3921,16 @@ function dcMonthGrid(m) {
 function dcRenderCalendar() {
   var left = dcState.leftMonth.clone();
   var right = left.clone().add(1, 'month');
+  function btn(status, label) {
+    var cls = 'dc-status-btn' + (dcState.statusFilter === status ? ' dc-status-active' : '');
+    return '<a href="javascript:void(0);" class="' + cls + '" data-status="' + status + '">' + label + '</a>';
+  }
   var h = '<div class="dc-cal-nav">' +
     '<button class="btn btn-sm btn-outline-secondary" id="dc-prev"><span class="fa fa-chevron-left"></span> Prev</button>' +
     '<span class="dc-cal-range">' + left.format('MMM YYYY') + ' – ' + right.format('MMM YYYY') + '</span>' +
     '<button class="btn btn-sm btn-outline-secondary" id="dc-next">Next <span class="fa fa-chevron-right"></span></button>' +
     '<button class="btn btn-sm btn-outline-primary" id="dc-thismonth">This month</button>' +
+    '<span class="dc-status-toggle">' + btn('all', 'All') + btn('RESOLVED', 'Resolved') + btn('UNRESOLVED', 'Unresolved') + '</span>' +
     '<span class="dc-cal-hint">Click a highlighted day to filter cases created that day.</span>' +
     '</div>';
   h += '<div class="dc-months">' + dcMonthGrid(left) + dcMonthGrid(right) + '</div>';
@@ -3863,6 +3951,8 @@ function dcRenderList() {
   }
 
   var rows = s.cases.slice();
+  if (s.statusFilter === 'RESOLVED') rows = rows.filter(function(c) { return c.isResolved; });
+  else if (s.statusFilter === 'UNRESOLVED') rows = rows.filter(function(c) { return !c.isResolved; });
   if (s.selectedDate) rows = rows.filter(function(c) { return c.createdKey === s.selectedDate; });
   if (s.caseIdFilter) {
     var q = s.caseIdFilter.toLowerCase();
@@ -4029,6 +4119,371 @@ function dcShowDetail(id) {
   $('#disputeDetailModal').modal('show');
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * Subscription Analysis — full-page panel
+ *
+ * Groups POST /v1/billing/subscriptions (create), GET
+ * /v1/billing/subscriptions/{id} (detail) and GET
+ * /v1/billing/subscriptions/{id}/transactions (payment history) records by
+ * subscription ID. The calendar shows subscriptions *created* per day
+ * (by the create call's create_time, local timezone); selecting a day
+ * filters the list below. The summary panel reports how many of the
+ * in-scope subscriptions had a successful first payment, and a
+ * failed_payments_count distribution (from the latest detail snapshot)
+ * that can itself be clicked to filter the list — surfacing subscribers
+ * with repeated failed payments ("bad subscribers").
+ * ════════════════════════════════════════════════════════════════════════ */
+var saState = null;      /* { subs, counts, leftMonth, selectedDate, idFilter, failedFilter, page, navEmpty } */
+var saDetailSub = null;  /* subscription currently shown in the detail modal */
+
+function saEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function saFmtDate(t) { if (!t) return ''; try { return moment.utc(t).tz(ianaTimezone).format('YYYY-MM-DD HH:mm'); } catch (e) { return String(t); } }
+function saDayKey(t) { if (!t) return ''; try { return moment.utc(t).tz(ianaTimezone).format('YYYY-MM-DD'); } catch (e) { return ''; } }
+function saAmt(a) { if (!a || a.value == null) return ''; return saEsc(a.value + (a.currency_code ? ' ' + a.currency_code : '')); }
+
+function buildSubscriptionModel() {
+  var txnUrlRe = /^\/v1\/billing\/subscriptions\/([^\/?]+)\/transactions$/;
+  var detailUrlRe = /^\/v1\/billing\/subscriptions\/([^\/?]+)$/;
+  var byId = {};
+  function ensure(id) { return byId[id] || (byId[id] = { id: id, records: [], detailSnaps: [], txns: {} }); }
+
+  tableItems.forEach(function(row) {
+    var url = row.url || '';
+    var method = (row.api_request && row.api_request.method) || '';
+    var body = (row.api_response && row.api_response.body) || {};
+    var m;
+    if (url === '/v1/billing/subscriptions' && method === 'POST' && body.id) {
+      var e = ensure(body.id);
+      e.records.push(row);
+      e.createRow = row;
+      e.createBody = body;
+    } else if ((m = url.match(txnUrlRe))) {
+      var e = ensure(m[1]);
+      e.records.push(row);
+      (body.transactions || []).forEach(function(t) { if (t.id) e.txns[t.id] = t; });
+    } else if ((m = url.match(detailUrlRe))) {
+      var e = ensure(m[1]);
+      e.records.push(row);
+      e.detailSnaps.push({ t: row.create_time || '', body: body });
+    }
+  });
+
+  Object.keys(byId).forEach(function(id) {
+    var e = byId[id];
+    e.detailSnaps.sort(function(a, b) { return a.t < b.t ? -1 : (a.t > b.t ? 1 : 0); });  /* oldest → latest */
+    var latest = e.detailSnaps.length ? e.detailSnaps[e.detailSnaps.length - 1].body : null;
+    e.hasDetail = !!latest;
+
+    e.created = (e.createBody && e.createBody.create_time) || (latest && latest.create_time) || '';
+    e.createdKey = e.created ? saDayKey(e.created) : '';
+    e.planId = (e.createBody && e.createBody.plan_id) || (latest && latest.plan_id) || '';
+    e.status = (latest && latest.status) || (e.createBody && e.createBody.status) || '';
+
+    var bi = latest && latest.billing_info;
+    e.failedPaymentsCount = (bi && bi.failed_payments_count != null) ? bi.failed_payments_count : null;
+    e.outstandingBalance = bi && bi.outstanding_balance;
+    e.nextBillingTime = bi && bi.next_billing_time;
+    e.cycleExecutions = (bi && bi.cycle_executions) || [];
+
+    var txnList = Object.keys(e.txns).map(function(k) { return e.txns[k]; });
+    txnList.sort(function(a, b) { return (a.time || '') < (b.time || '') ? -1 : 1; });  /* oldest → latest */
+    e.txnList = txnList;
+    e.firstTxn = txnList.length ? txnList[0] : null;
+    e.firstTxnStatus = e.firstTxn ? e.firstTxn.status : '';
+    e.firstTxnSameDay = !!(e.firstTxn && e.createdKey && saDayKey(e.firstTxn.time) === e.createdKey);
+  });
+
+  return byId;
+}
+
+function saFindSub(id) { for (var i = 0; i < saState.subs.length; i++) { if (saState.subs[i].id === id) return saState.subs[i]; } return null; }
+
+/* Subscription dates (YYYY-MM-DD) falling within the two months currently shown. */
+function saVisibleDates() {
+  var lo = saState.leftMonth.clone().startOf('month').format('YYYY-MM-DD');
+  var hi = saState.leftMonth.clone().add(1, 'month').endOf('month').format('YYYY-MM-DD');
+  var counts = saState.statusFilter === 'ACTIVE' ? saState.activeCounts : saState.counts;
+  return Object.keys(counts).filter(function(k) { return k >= lo && k <= hi; }).sort();
+}
+
+function saAfterNav() {
+  saState.page = 0;
+  var dates = saVisibleDates();
+  if (dates.length) { saState.selectedDate = dates[0]; saState.navEmpty = false; }
+  else { saState.selectedDate = null; saState.navEmpty = true; }
+  saRenderCalendar();
+  saRenderSummary();
+  saRenderList();
+}
+
+function showSubscriptionAnalysis() {
+  var byId = buildSubscriptionModel();
+  var subs = Object.keys(byId).map(function(id) { return byId[id]; });
+  subs.sort(function(a, b) { return a.created < b.created ? 1 : (a.created > b.created ? -1 : 0); });  /* newest first; unknown-created last */
+
+  var counts = {};
+  var activeCounts = {};
+  subs.forEach(function(s) {
+    if (!s.createdKey) return;
+    counts[s.createdKey] = (counts[s.createdKey] || 0) + 1;
+    if (s.status === 'ACTIVE') activeCounts[s.createdKey] = (activeCounts[s.createdKey] || 0) + 1;
+  });
+
+  var anchor = (subs.length && subs[0].created)
+    ? moment.utc(subs[0].created).tz(ianaTimezone).startOf('month')
+    : moment().startOf('month');
+
+  saState = {
+    subs: subs,
+    counts: counts,
+    activeCounts: activeCounts,
+    statusFilter: 'all',   /* 'all' | 'ACTIVE' — which count the calendar shows and the list/summary scope to */
+    leftMonth: anchor.clone().subtract(1, 'month'),
+    selectedDate: null,
+    idFilter: '',
+    failedFilter: null,
+    page: 0,
+    navEmpty: false
+  };
+
+  $('#sa-idfilter').val('');
+  $('#subAnalysisPanel').show();
+  $('body').css('overflow', 'hidden');
+  saRenderCalendar();
+  saRenderSummary();
+  saRenderList();
+}
+
+function saMonthGrid(m) {
+  var firstDow = m.day();
+  var daysInMonth = m.daysInMonth();
+  var showActive = saState.statusFilter === 'ACTIVE';
+  var h = '<div class="dc-month"><div class="dc-month-title">' + m.format('MMMM YYYY') + '</div><div class="dc-grid">';
+  ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(function(d) { h += '<div class="dc-dow">' + d + '</div>'; });
+  for (var i = 0; i < firstDow; i++) h += '<div class="dc-cell dc-empty"></div>';
+  for (var day = 1; day <= daysInMonth; day++) {
+    var key = m.clone().date(day).format('YYYY-MM-DD');
+    var cnt = showActive ? (saState.activeCounts[key] || 0) : (saState.counts[key] || 0);
+    var cls = 'dc-cell';
+    if (cnt > 0) cls += ' dc-has';
+    if (saState.selectedDate === key) cls += ' dc-selected';
+    var countCls = 'dc-count' + (showActive ? ' sa-count-active' : '');
+    h += '<div class="' + cls + '" data-date="' + key + '"><span class="dc-daynum">' + day + '</span>' +
+         (cnt > 0 ? '<span class="' + countCls + '">' + cnt + '</span>' : '') + '</div>';
+  }
+  return h + '</div></div>';
+}
+
+function saRenderCalendar() {
+  var left = saState.leftMonth.clone();
+  var right = left.clone().add(1, 'month');
+  var allActive = saState.statusFilter === 'all' ? ' sa-status-active' : '';
+  var activeActive = saState.statusFilter === 'ACTIVE' ? ' sa-status-active' : '';
+  var h = '<div class="dc-cal-nav">' +
+    '<button class="btn btn-sm btn-outline-secondary" id="sa-prev"><span class="fa fa-chevron-left"></span> Prev</button>' +
+    '<span class="dc-cal-range">' + left.format('MMM YYYY') + ' – ' + right.format('MMM YYYY') + '</span>' +
+    '<button class="btn btn-sm btn-outline-secondary" id="sa-next">Next <span class="fa fa-chevron-right"></span></button>' +
+    '<button class="btn btn-sm btn-outline-primary" id="sa-thismonth">This month</button>' +
+    '<span class="sa-status-toggle">' +
+      '<a href="javascript:void(0);" class="sa-status-btn' + allActive + '" data-status="all">All</a>' +
+      '<a href="javascript:void(0);" class="sa-status-btn' + activeActive + '" data-status="ACTIVE">Active only</a>' +
+    '</span>' +
+    '<span class="dc-cal-hint">Click a highlighted day to filter subscriptions created that day.</span>' +
+    '</div>';
+  h += '<div class="dc-months">' + saMonthGrid(left) + saMonthGrid(right) + '</div>';
+  $('#sa-calendar').html(h);
+}
+
+/* Subscriptions matching the date + ID filters, ignoring the failed-payments toggle
+ * (used both to drive the summary/distribution and as the base for the list). */
+function saScopedSubs() {
+  var s = saState;
+  var rows = s.subs.slice();
+  if (s.statusFilter === 'ACTIVE') rows = rows.filter(function(x) { return x.status === 'ACTIVE'; });
+  if (s.selectedDate) rows = rows.filter(function(x) { return x.createdKey === s.selectedDate; });
+  if (s.idFilter) {
+    var q = s.idFilter.toLowerCase();
+    rows = rows.filter(function(x) { return String(x.id).toLowerCase().indexOf(q) !== -1; });
+  }
+  return rows;
+}
+
+function saRenderSummary() {
+  var rows = saScopedSubs();
+  var total = rows.length;
+  var withTxn = rows.filter(function(x) { return x.firstTxn; });
+  var successCount = withTxn.filter(function(x) { return x.firstTxnStatus === 'COMPLETED'; }).length;
+  var successRate = withTxn.length ? (successCount / withTxn.length * 100).toFixed(1) + '%' : 'n/a';
+  var noTxnCount = total - withTxn.length;
+
+  var scopeLabel = saState.selectedDate ? ' created on <strong>' + saEsc(saState.selectedDate) + '</strong>' : '';
+
+  var h = '<div class="sa-summary">';
+  h += '<strong class="sa-big">' + total + '</strong> subscription(s)' + scopeLabel + '. ';
+  h += 'Of the <strong>' + withTxn.length + '</strong> with a captured first payment, <strong>' + successCount +
+       '</strong> succeeded (<strong>' + successRate + '</strong>).';
+  if (noTxnCount) h += ' <span class="text-muted">' + noTxnCount + ' have no captured transaction record.</span>';
+  h += '</div>';
+
+  /* failed_payments_count distribution, from the latest GET subscription-detail
+   * snapshot only; subscriptions never queried for detail get their own bucket. */
+  var dist = {};
+  var noDetail = 0;
+  rows.forEach(function(x) {
+    if (!x.hasDetail) { noDetail++; return; }
+    var v = x.failedPaymentsCount == null ? '(no billing info)' : x.failedPaymentsCount;
+    dist[v] = (dist[v] || 0) + 1;
+  });
+  var keys = Object.keys(dist).sort(function(a, b) { return (parseInt(a) || 0) - (parseInt(b) || 0); });
+
+  if (keys.length || noDetail) {
+    h += '<div class="sa-fp-title"><span class="fa fa-exclamation-circle" style="color:#e15759;"></span> Failed payments count distribution ' +
+      '<span class="text-muted" style="font-size:84%; font-weight:normal;">(from GET subscription detail; click a value to filter the list below)</span></div>';
+    h += '<div style="overflow-x:auto;"><table class="table table-sm table-bordered table-striped mb-2" style="font-size:92%; max-width:560px;">' +
+      '<thead class="thead-light"><tr><th>Failed payments</th><th style="text-align:center; width:100px;">Subscribers</th></tr></thead><tbody>';
+    keys.forEach(function(k) {
+      var active = (String(saState.failedFilter) === k) ? ' sa-fp-active' : '';
+      var label = (k === '0') ? '0 (healthy)' : k;
+      h += '<tr><td><a href="javascript:void(0);" class="sa-fp-toggle' + active + '" data-fp="' + saEsc(k) + '">' + saEsc(label) + '</a></td>' +
+        '<td style="text-align:center; font-weight:bold; color:' + (k > 0 ? '#e15759' : '#28a745') + ';">' + dist[k] + '</td></tr>';
+    });
+    if (noDetail) {
+      h += '<tr><td><span class="text-muted">(no detail fetched)</span></td><td style="text-align:center;">' + noDetail + '</td></tr>';
+    }
+    h += '</tbody></table></div>';
+  }
+
+  $('#sa-summary').html(h);
+}
+
+function saRenderList() {
+  var s = saState, PAGE = 50;
+
+  if (!s.selectedDate && !s.idFilter && s.navEmpty) {
+    $('#sa-list').html(
+      '<div class="dc-list-head"><span>No subscriptions were created in the displayed months.</span>' +
+      '<button class="btn btn-xsm btn-outline-secondary" id="sa-show-all">List all subscriptions</button></div>' +
+      '<div class="alert alert-info mb-0" style="font-size:88%;">Use Prev / Next to find a month with a highlighted day, or list all subscriptions.</div>'
+    );
+    return;
+  }
+
+  var rows = saScopedSubs();
+  if (s.failedFilter !== null) {
+    rows = rows.filter(function(x) {
+      var v = x.hasDetail ? (x.failedPaymentsCount == null ? '(no billing info)' : String(x.failedPaymentsCount)) : null;
+      return v === s.failedFilter;
+    });
+  }
+
+  var heading = s.selectedDate
+    ? '<strong>' + rows.length + '</strong> subscription(s) created on <strong>' + saEsc(s.selectedDate) + '</strong>'
+    : '<strong>' + rows.length + '</strong> subscription(s)' + (s.idFilter ? ' matching &ldquo;' + saEsc(s.idFilter) + '&rdquo;' : '');
+  if (s.failedFilter !== null) heading += ' &middot; failed payments = <strong>' + saEsc(s.failedFilter) + '</strong>';
+  var h = '<div class="dc-list-head">' + heading;
+  if (s.selectedDate) h += '<button class="btn btn-xsm btn-outline-secondary" id="sa-clear-date">Show all dates</button>';
+  if (s.failedFilter !== null) h += '<button class="btn btn-xsm btn-outline-secondary" id="sa-clear-fp">Clear failed-payments filter</button>';
+  h += '</div>';
+
+  if (!rows.length) {
+    h += '<div class="alert alert-info mb-0">No subscriptions match the current filters.</div>';
+    $('#sa-list').html(h);
+    return;
+  }
+
+  var pages = Math.ceil(rows.length / PAGE);
+  if (s.page >= pages) s.page = 0;
+  var start = s.page * PAGE;
+  var pageRows = rows.slice(start, start + PAGE);
+
+  h += '<div style="overflow-x:auto;"><table class="table table-sm table-bordered table-striped mb-1" style="font-size:90%;">' +
+    '<thead class="thead-light"><tr><th>Subscription ID</th><th>Created</th><th>Plan ID</th>' +
+    '<th>First payment</th><th>Latest status</th><th style="text-align:center;">Failed payments</th><th style="width:82px;"></th></tr></thead><tbody>';
+  pageRows.forEach(function(x) {
+    var fpCell = '<span class="text-muted">—</span>';
+    if (x.hasDetail) {
+      var fp = x.failedPaymentsCount == null ? '(no billing info)' : x.failedPaymentsCount;
+      fpCell = '<span style="font-weight:bold; color:' + (fp > 0 ? '#e15759' : '#28a745') + ';">' + saEsc(fp) + '</span>';
+    }
+    var firstPay = '<span class="text-muted">—</span>';
+    if (x.firstTxn) {
+      var color = x.firstTxnStatus === 'COMPLETED' ? '#28a745' : '#e15759';
+      firstPay = '<span style="color:' + color + '; font-weight:bold;">' + saEsc(x.firstTxnStatus) + '</span> ' +
+        '<span class="text-muted" style="font-size:85%;">' + saFmtDate(x.firstTxn.time) + '</span>';
+    }
+    h += '<tr>' +
+      '<td style="font-family:monospace; font-size:12px; white-space:nowrap;">' + saEsc(x.id) + '</td>' +
+      '<td style="white-space:nowrap; font-size:12px;">' + (x.created ? saFmtDate(x.created) : '<span class="text-muted">unknown</span>') + '</td>' +
+      '<td style="font-family:monospace; font-size:11px;">' + (x.planId ? saEsc(x.planId) : '—') + '</td>' +
+      '<td style="white-space:nowrap; font-size:12px;">' + firstPay + '</td>' +
+      '<td style="font-size:12px;">' + (x.status ? saEsc(x.status) : '—') + '</td>' +
+      '<td style="text-align:center;">' + fpCell + '</td>' +
+      '<td><button class="btn btn-xsm btn-outline-primary sa-detail-btn" data-id="' + saEsc(x.id) + '">Detail</button></td>' +
+      '</tr>';
+  });
+  h += '</tbody></table></div>';
+
+  if (pages > 1) {
+    h += '<div class="dc-pager">' +
+      '<button class="btn btn-xsm btn-outline-secondary" id="sa-prev-page"' + (s.page === 0 ? ' disabled' : '') + '>&laquo; Prev</button>' +
+      '<span class="dc-page-info">Page ' + (s.page + 1) + ' of ' + pages + ' · showing ' + (start + 1) + '–' + Math.min(start + PAGE, rows.length) + ' of ' + rows.length + '</span>' +
+      '<button class="btn btn-xsm btn-outline-secondary" id="sa-next-page"' + (s.page >= pages - 1 ? ' disabled' : '') + '>Next &raquo;</button>' +
+      '</div>';
+  }
+  $('#sa-list').html(h);
+}
+
+function saKV(k, v) {
+  var val = (v == null || v === '') ? '<span class="text-muted">—</span>' : v;
+  return '<div class="k">' + saEsc(k) + '</div><div class="v">' + val + '</div>';
+}
+
+function saShowDetail(id) {
+  var x = saFindSub(id);
+  if (!x) return;
+  saDetailSub = x;
+  var h = '<div class="dc-detail-grid">';
+  h += saKV('Status', x.status ? saEsc(x.status) : '');
+  h += saKV('Plan ID', x.planId ? saEsc(x.planId) : '');
+  h += saKV('Created', x.created ? saFmtDate(x.created) : '');
+  h += saKV('Outstanding balance', saAmt(x.outstandingBalance));
+  h += saKV('Next billing time', x.nextBillingTime ? saFmtDate(x.nextBillingTime) : '');
+  h += saKV('Failed payments count', x.hasDetail ? String(x.failedPaymentsCount == null ? '(no billing info)' : x.failedPaymentsCount) : '<span class="text-muted">no detail fetched</span>');
+  h += '</div>';
+
+  if (x.cycleExecutions.length) {
+    h += '<div class="dc-sec-title">Cycle executions</div>';
+    h += '<div style="overflow-x:auto;"><table class="table table-sm table-bordered mb-1" style="font-size:87%;">' +
+      '<thead class="thead-light"><tr><th>Tenure</th><th>Sequence</th><th>Cycles completed</th><th>Cycles remaining</th></tr></thead><tbody>';
+    x.cycleExecutions.forEach(function(c) {
+      h += '<tr><td>' + saEsc(c.tenure_type || '—') + '</td><td>' + saEsc(c.sequence != null ? c.sequence : '—') + '</td>' +
+        '<td>' + saEsc(c.cycles_completed != null ? c.cycles_completed : '—') + '</td>' +
+        '<td>' + saEsc(c.cycles_remaining != null ? c.cycles_remaining : '—') + '</td></tr>';
+    });
+    h += '</tbody></table></div>';
+  }
+
+  h += '<div class="dc-sec-title">Transactions (' + x.txnList.length + ')</div>';
+  if (x.txnList.length) {
+    h += '<div style="overflow-x:auto;"><table class="table table-sm table-bordered mb-1" style="font-size:87%;">' +
+      '<thead class="thead-light"><tr><th>Transaction ID</th><th>Time</th><th>Status</th><th>Gross amount</th></tr></thead><tbody>';
+    x.txnList.forEach(function(t) {
+      var color = t.status === 'COMPLETED' ? '#28a745' : '#e15759';
+      h += '<tr><td style="font-family:monospace; font-size:11px;">' + saEsc(t.id || '—') + '</td>' +
+        '<td style="white-space:nowrap;">' + (t.time ? saFmtDate(t.time) : '—') + '</td>' +
+        '<td style="color:' + color + '; font-weight:bold;">' + saEsc(t.status || '—') + '</td>' +
+        '<td style="white-space:nowrap;">' + (t.amount_with_breakdown && t.amount_with_breakdown.gross_amount ? saAmt(t.amount_with_breakdown.gross_amount) : '—') + '</td></tr>';
+    });
+    h += '</tbody></table></div>';
+  } else {
+    h += '<p class="text-muted mb-0" style="font-size:88%;">No transactions captured.</p>';
+  }
+
+  $('#subDetailTitle').html('<span class="fa fa-refresh text-success"></span> <span style="font-family:monospace; font-size:90%;">' + saEsc(x.id) + '</span>');
+  $('#subDetailBody').html(h);
+  $('#subDetailModal').modal('show');
+}
+
 /* ── Load data from file picker ── */
 function loadAndRender(allData) {
   if (!allData || !allData.length) {
@@ -4110,6 +4565,12 @@ $(document).ready(function() {
     dcState.leftMonth = moment().startOf('month').subtract(1, 'month');
     dcAfterNav();
   });
+  $(document).on('click', '#disputeCalendarPanel .dc-status-btn', function() {
+    var status = $(this).data('status');
+    if (dcState.statusFilter === status) return;
+    dcState.statusFilter = status;
+    dcAfterNav();
+  });
   $(document).on('click', '#disputeCalendarPanel .dc-cell.dc-has', function() {
     var dt = String($(this).attr('data-date'));
     dcState.selectedDate = (dcState.selectedDate === dt) ? null : dt;
@@ -4141,6 +4602,80 @@ $(document).ready(function() {
     if (dcDetailCase && dcDetailCase.records && dcDetailCase.records.length) {
       openFilteredWindow(dcDetailCase.records, 'Dispute ' + dcDetailCase.id + ' — API records');
     }
+  });
+
+  /* ── Subscription Analysis events ── */
+  $('#btnSubscriptionAnalysis').on('click', showSubscriptionAnalysis);
+  $('#sa-close').on('click', function() {
+    $('#subAnalysisPanel').hide();
+    $('body').css('overflow', '');
+  });
+  $(document).on('click', '#sa-prev', function() { saState.leftMonth.subtract(2, 'month'); saAfterNav(); });
+  $(document).on('click', '#sa-next', function() { saState.leftMonth.add(2, 'month'); saAfterNav(); });
+  $(document).on('click', '#sa-thismonth', function() {
+    saState.leftMonth = moment().startOf('month').subtract(1, 'month');
+    saAfterNav();
+  });
+  $(document).on('click', '.sa-status-btn', function() {
+    var status = $(this).data('status');
+    if (saState.statusFilter === status) return;
+    saState.statusFilter = status;
+    saAfterNav();
+  });
+  $(document).on('click', '#subAnalysisPanel .dc-cell.dc-has', function() {
+    var dt = String($(this).attr('data-date'));
+    saState.selectedDate = (saState.selectedDate === dt) ? null : dt;
+    saState.navEmpty = false;
+    saState.page = 0;
+    saRenderCalendar();
+    saRenderSummary();
+    saRenderList();
+  });
+  $(document).on('click', '#sa-clear-date, #sa-show-all', function() {
+    saState.selectedDate = null;
+    saState.navEmpty = false;
+    saState.page = 0;
+    saRenderCalendar();
+    saRenderSummary();
+    saRenderList();
+  });
+  $(document).on('input', '#sa-idfilter', function() {
+    saState.idFilter = $(this).val().trim();
+    saState.page = 0;
+    saRenderSummary();
+    saRenderList();
+  });
+  $(document).on('click', '.sa-fp-toggle', function() {
+    var fp = String($(this).data('fp'));
+    saState.failedFilter = (saState.failedFilter === fp) ? null : fp;
+    saState.page = 0;
+    saRenderSummary();
+    saRenderList();
+  });
+  $(document).on('click', '#sa-clear-fp', function() {
+    saState.failedFilter = null;
+    saRenderSummary();
+    saRenderList();
+  });
+  $(document).on('click', '#sa-prev-page', function() {
+    if (saState.page > 0) { saState.page--; saRenderList(); document.getElementById('sa-list').scrollIntoView({ block: 'start' }); }
+  });
+  $(document).on('click', '#sa-next-page', function() {
+    saState.page++; saRenderList(); document.getElementById('sa-list').scrollIntoView({ block: 'start' });
+  });
+  $(document).on('click', '.sa-detail-btn', function() { saShowDetail(String($(this).attr('data-id'))); });
+  $('#btnSubDetailRecords').on('click', function() {
+    if (saDetailSub && saDetailSub.records && saDetailSub.records.length) {
+      openFilteredWindow(saDetailSub.records, 'Subscription ' + saDetailSub.id + ' — API records');
+    }
+  });
+  $('#btnExportSubCsv').on('click', function() {
+    var headers = ['Subscription ID', 'Created', 'Plan ID', 'First payment status', 'First payment time', 'Latest status', 'Failed payments count'];
+    var rows = saScopedSubs().map(function(x) {
+      return [x.id, x.created ? saFmtDate(x.created) : '', x.planId || '', x.firstTxnStatus || '', x.firstTxn ? saFmtDate(x.firstTxn.time) : '',
+        x.status || '', x.hasDetail ? (x.failedPaymentsCount == null ? '(no billing info)' : x.failedPaymentsCount) : ''];
+    });
+    downloadCsv('subscription_analysis.csv', headers, rows);
   });
 
   /* Exclude filter events */
